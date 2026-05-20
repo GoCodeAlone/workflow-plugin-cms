@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/bundle"
+	"github.com/GoCodeAlone/workflow-plugin-cms/media"
 )
 
 func TestServer_Healthz_OK(t *testing.T) {
@@ -235,4 +237,68 @@ func TestServer_EndToEnd_TenantCreate_PreviewAutoProvision(t *testing.T) {
 			t.Errorf("%s: host = %v want %s", slug, first["Host"], want)
 		}
 	}
+}
+
+func TestServer_Metrics(t *testing.T) {
+	s := New(Config{})
+	// Generate some traffic.
+	_ = doReq(t, s, "GET", "/healthz", "", nil)
+	_ = doReq(t, s, "GET", "/healthz", "", nil)
+	_ = doReq(t, s, "POST", "/api/v1/admin/tenants", "", strings.NewReader(`{"slug":"acme"}`))
+
+	rec := doReq(t, s, "GET", "/metrics", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "multisite_requests_total") {
+		t.Errorf("missing requests_total metric:\n%s", body)
+	}
+}
+
+func TestServer_Media_Disabled_503(t *testing.T) {
+	s := New(Config{}) // no MediaBackend
+	rec := doReq(t, s, "POST", "/api/v1/admin/tenants/1/upload", "text/plain", strings.NewReader("x"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("upload no-backend: %d want 503", rec.Code)
+	}
+}
+
+func TestServer_Media_Enabled_Created(t *testing.T) {
+	dir := t.TempDir()
+	s := New(Config{
+		MediaBackend: &media.LocalFS{Root: dir, PublicURL: "https://x/m"},
+	})
+	rec := doReq(t, s, "POST", "/api/v1/admin/tenants/1/upload", "text/plain", strings.NewReader("hello"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"url":"https://x/m/1/`) {
+		t.Errorf("upload body: %s", rec.Body.String())
+	}
+}
+
+func TestServer_Audit_OnlyWhenKeySet(t *testing.T) {
+	noKey := New(Config{})
+	if noKey.Audit() != nil {
+		t.Error("Audit should be nil without AuditSignKey")
+	}
+	withKey := New(Config{AuditSignKey: "k"})
+	if withKey.Audit() == nil {
+		t.Error("Audit should be non-nil with AuditSignKey")
+	}
+}
+
+// doReq is a helper used by the metrics/media tests.
+func doReq(t *testing.T, h http.Handler, method, target, contentType string, body io.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, target, body)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	} else if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
 }

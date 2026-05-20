@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Multisite Admin</title>
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <header>
+    <h1>Multisite Admin</h1>
+    <button id="btn-reload" type="button">Reload tenants cache</button>
+  </header>
+
+  <main>
+    <section id="tenants-section">
+      <h2>Tenants</h2>
+      <table id="tenants-table">
+        <thead><tr><th>ID</th><th>Slug</th><th>Label</th><th>Theme</th><th></th></tr></thead>
+        <tbody id="tenants-body"></tbody>
+      </table>
+
+      <h3>New tenant</h3>
+      <form id="new-tenant-form">
+        <label>Slug <input name="slug" required pattern="[a-z0-9-]+" placeholder="acme"></label>
+        <label>Label <input name="label" required placeholder="Acme Inc"></label>
+        <label>Theme <input name="theme_id" placeholder="default"></label>
+        <button type="submit">Create</button>
+      </form>
+    </section>
+
+    <section id="tenant-detail-section" hidden>
+      <h2>Tenant: <span id="td-slug"></span></h2>
+      <p><button id="btn-back" type="button">← back</button></p>
+
+      <h3>Domains</h3>
+      <table id="domains-table">
+        <thead><tr><th>Host</th><th>Subsite</th><th>Kind</th><th></th></tr></thead>
+        <tbody id="domains-body"></tbody>
+      </table>
+      <form id="new-domain-form">
+        <label>Host <input name="host" required placeholder="acme.example"></label>
+        <label>Subsite <input name="subsite_label" placeholder="(root)"></label>
+        <label>Kind
+          <select name="kind">
+            <option value="vanity">vanity</option>
+            <option value="preview">preview</option>
+            <option value="subdomain">subdomain</option>
+          </select>
+        </label>
+        <button type="submit">Add</button>
+      </form>
+
+      <h3>Pages</h3>
+      <table id="pages-table">
+        <thead><tr><th>ID</th><th>Path</th><th>Title</th><th>Status</th><th></th></tr></thead>
+        <tbody id="pages-body"></tbody>
+      </table>
+      <details>
+        <summary>New page</summary>
+        <form id="new-page-form">
+          <label>Path <input name="path" required placeholder="/welcome"></label>
+          <label>Title <input name="title" required placeholder="Welcome"></label>
+          <label>Status
+            <select name="status">
+              <option value="draft">draft</option>
+              <option value="published">published</option>
+            </select>
+          </label>
+          <label>Body HTML
+            <textarea name="body_html" rows="8" placeholder="<h1>...</h1>"></textarea>
+          </label>
+          <button type="submit">Create page</button>
+        </form>
+      </details>
+    </section>
+  </main>
+
+  <div id="toast" hidden></div>
+  <script src="admin.js"></script>
+</body>
+</html>

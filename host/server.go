@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GoCodeAlone/workflow-plugin-cms/adminui"
 	"github.com/GoCodeAlone/workflow-plugin-cms/analytics"
 	"github.com/GoCodeAlone/workflow-plugin-cms/audit"
 	"github.com/GoCodeAlone/workflow-plugin-cms/bundle"
@@ -91,6 +92,7 @@ type Server struct {
 	media      *media.UploadHandler
 	metrics    *monitoring.Counters
 	audit      *audit.Logger
+	adminUI    http.Handler
 	mu         sync.RWMutex
 	cached     map[string]TenantInfo // host:lookup cache for the simple resolver
 	cachedSlug map[string]TenantInfo
@@ -131,6 +133,7 @@ func New(cfg Config) *Server {
 	if cfg.AuditSignKey != "" {
 		s.audit = audit.New(cfg.AuditSignKey, nil)
 	}
+	s.adminUI = http.StripPrefix("/admin", adminui.Handler())
 
 	return s
 }
@@ -186,6 +189,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if path == "/metrics" && s.metrics != nil {
 		s.metrics.ServeHTTP(rec, r)
+		return
+	}
+
+	// Admin web UI — embedded static files.
+	if path == "/admin" {
+		http.Redirect(rec, r, "/admin/", http.StatusMovedPermanently)
+		return
+	}
+	if strings.HasPrefix(path, "/admin/") {
+		s.adminUI.ServeHTTP(rec, r)
 		return
 	}
 

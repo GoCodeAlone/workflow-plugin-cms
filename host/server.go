@@ -11,13 +11,17 @@ package host
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/analytics"
+	"github.com/GoCodeAlone/workflow-plugin-cms/audit"
 	"github.com/GoCodeAlone/workflow-plugin-cms/bundle"
 	"github.com/GoCodeAlone/workflow-plugin-cms/internal"
+	"github.com/GoCodeAlone/workflow-plugin-cms/media"
+	"github.com/GoCodeAlone/workflow-plugin-cms/monitoring"
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
 )
 
@@ -58,6 +62,14 @@ type Config struct {
 
 	// HealthCheck reports liveness (DB ping, etc.). Nil → always OK.
 	HealthCheck func(ctx context.Context) error
+
+	// MediaBackend persists tenant-scoped uploads. Nil disables the
+	// upload endpoint (returns 503).
+	MediaBackend media.Backend
+
+	// AuditSignKey signs audit-chain entries. Empty disables audit
+	// recording. Audit entries are emitted for tenant + page mutations.
+	AuditSignKey string
 }
 
 // TenantResolverStore is the read-side tenant lookup interface — it is
@@ -73,11 +85,14 @@ type TenantInfo = internal.TenantInfo
 
 // Server is the assembled multisite host.
 type Server struct {
-	cfg     Config
-	admin   *internal.AdminAPI
-	ingest  *bundle.IngestHandler
-	mu      sync.RWMutex
-	cached  map[string]TenantInfo // host:lookup cache for the simple resolver
+	cfg        Config
+	admin      *internal.AdminAPI
+	ingest     *bundle.IngestHandler
+	media      *media.UploadHandler
+	metrics    *monitoring.Counters
+	audit      *audit.Logger
+	mu         sync.RWMutex
+	cached     map[string]TenantInfo // host:lookup cache for the simple resolver
 	cachedSlug map[string]TenantInfo
 }
 
@@ -108,8 +123,24 @@ func New(cfg Config) *Server {
 		OnPayload: cfg.OnIngest,
 	}
 
+	// Optional surfaces.
+	if cfg.MediaBackend != nil {
+		s.media = &media.UploadHandler{Backend: cfg.MediaBackend}
+	}
+	s.metrics = monitoring.New()
+	if cfg.AuditSignKey != "" {
+		s.audit = audit.New(cfg.AuditSignKey, nil)
+	}
+
 	return s
 }
+
+// Metrics returns the Counters (for /metrics) — exposed so the host
+// binary can mount it on a separate path if needed.
+func (s *Server) Metrics() *monitoring.Counters { return s.metrics }
+
+// Audit returns the audit Logger if configured. May be nil.
+func (s *Server) Audit() *audit.Logger { return s.audit }
 
 // flushCaches clears the in-memory tenant lookup cache. Called by the
 // /api/v1/admin/reload endpoint (T31).
@@ -124,27 +155,58 @@ func (s *Server) flushCaches() error {
 // ServeHTTP routes a single request. Order of resolution:
 //
 //  1. /healthz (always served, even without a Host header match)
-//  2. /api/v1/admin/* — handed to AdminAPI
-//  3. /api/v1/ingest/release — handed to IngestHandler (HMAC)
-//  4. Everything else → tenant resolve → static-serve → 404 if neither
+//  2. /metrics — Prometheus exposition
+//  3. /api/v1/admin/* — handed to AdminAPI (+ media upload subroute)
+//  4. /api/v1/ingest/release — handed to IngestHandler (HMAC)
+//  5. Everything else → tenant resolve → static-serve → 404 if neither
 //
-// Cross-cutting: every response gets per-tenant analytics injection IF
-// the response is HTML AND the tenant has a measurement_id.
+// Every request increments the per-tenant request counter (V30) keyed
+// on the resolved tenant slug (or "_unresolved" for admin/system
+// routes).
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rec := &monitoring.StatusRecorder{ResponseWriter: w, Status: http.StatusOK}
+	tenantSlug := ""
+
+	defer func() {
+		if s.metrics != nil {
+			label := tenantSlug
+			if label == "" {
+				label = "_unresolved"
+			}
+			s.metrics.Inc(label, rec.Status)
+		}
+	}()
+
 	path := r.URL.Path
 
 	if path == "/healthz" {
-		s.serveHealthz(w, r)
+		s.serveHealthz(rec, r)
+		return
+	}
+
+	if path == "/metrics" && s.metrics != nil {
+		s.metrics.ServeHTTP(rec, r)
+		return
+	}
+
+	// Media upload route: POST /api/v1/admin/tenants/:id/upload.
+	if strings.HasPrefix(path, "/api/v1/admin/tenants/") && strings.HasSuffix(path, "/upload") {
+		if s.media == nil {
+			http.Error(rec, "media backend not configured", http.StatusServiceUnavailable)
+			return
+		}
+		tid := extractTenantIDFromPath(path)
+		s.media.ServeForTenant(rec, r, tid)
 		return
 	}
 
 	if strings.HasPrefix(path, "/api/v1/admin/") || path == "/api/v1/admin" {
-		s.admin.ServeHTTP(w, r)
+		s.admin.ServeHTTP(rec, r)
 		return
 	}
 
 	if path == "/api/v1/ingest/release" {
-		s.ingest.ServeHTTP(w, r)
+		s.ingest.ServeHTTP(rec, r)
 		return
 	}
 
@@ -153,11 +215,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// through table as the resolver matures.
 	tenant, ok := s.resolveTenant(r.Context(), r.Host)
 	if !ok {
-		http.Error(w, "not found", http.StatusNotFound)
+		http.Error(rec, "not found", http.StatusNotFound)
 		return
 	}
-	_ = tenant // future: render via CMS page store + bundle static-serve.
-	http.Error(w, "tenant resolved but no content path mounted yet", http.StatusNotFound)
+	tenantSlug = tenant.TenantSlug
+	http.Error(rec, "tenant resolved but no content path mounted yet", http.StatusNotFound)
+}
+
+// extractTenantIDFromPath parses /api/v1/admin/tenants/:id/upload →
+// :id. Returns 0 on parse failure (handler returns 400).
+func extractTenantIDFromPath(path string) int64 {
+	const prefix = "/api/v1/admin/tenants/"
+	rest := strings.TrimPrefix(path, prefix)
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) == 0 {
+		return 0
+	}
+	id, _ := strconv.ParseInt(parts[0], 10, 64)
+	return id
 }
 
 func (s *Server) serveHealthz(w http.ResponseWriter, r *http.Request) {

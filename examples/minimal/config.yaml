@@ -1,0 +1,31 @@
+# Minimal config exercising workflow-plugin-cms.
+# Schema-validate with: wfctl validate --skip-unknown-types examples/minimal/config.yaml
+
+version: 1
+
+modules:
+  - name: tenant-resolver
+    type: cms.tenant_resolver
+    config:
+      preview_subdomain_base: preview.example.com
+      on_unknown_domain: 404_neutral
+
+  - name: static-serve
+    type: cms.static_serve_before_dynamic
+    config:
+      bundle_root: /var/lib/multisite/bundles
+
+  - name: cms
+    type: cms.engine
+    config:
+      provider: tiptap
+      bundle_storage: /var/lib/multisite/bundles
+      default_theme_id: default
+
+workflows:
+  http:
+    routes:
+      - method: ANY
+        path: /*
+        handler: cms
+        middleware: [tenant-resolver, static-serve]

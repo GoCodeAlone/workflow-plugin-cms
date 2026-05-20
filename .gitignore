@@ -1,0 +1,13 @@
+/dist/
+/build/
+/bin/
+*.exe
+*.test
+*.out
+.DS_Store
+.idea/
+.vscode/
+*.swp
+_worktrees/
+.worktrees/
+*.log

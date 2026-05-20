@@ -1,0 +1,90 @@
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  padding: 1rem 2rem;
+  color: #1a1a1a;
+  background: #fafafa;
+  max-width: 960px;
+  margin: 0 auto;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 0;
+  border-bottom: 1px solid #ddd;
+  margin-bottom: 1.5rem;
+}
+h1, h2 { margin: 0; }
+h2 { margin-top: 1.5rem; }
+
+section { background: white; padding: 1.5rem; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-bottom: 1.5rem; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; }
+th { background: #f4f4f4; }
+
+form {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+form label { display: contents; }
+form label > input,
+form label > select,
+form label > textarea {
+  grid-column: 2;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  font: inherit;
+  width: 100%;
+}
+form > button {
+  grid-column: 1 / -1;
+  justify-self: start;
+  padding: 0.5rem 1.25rem;
+  background: #1a73e8;
+  color: white;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+}
+form > button:hover { background: #155bb5; }
+
+button.danger { background: #dc3545; }
+button.danger:hover { background: #b02a37; }
+
+button.link {
+  background: none;
+  border: 0;
+  color: #1a73e8;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+#toast {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  padding: 0.75rem 1rem;
+  background: #1a1a1a;
+  color: white;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  max-width: 24rem;
+}
+#toast.error { background: #dc3545; }
+#toast.ok { background: #198754; }
+
+details { margin-top: 1rem; }
+details summary { cursor: pointer; padding: 0.5rem 0; }

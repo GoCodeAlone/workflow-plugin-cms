@@ -170,3 +170,131 @@ func TestAdmin_RejectUnknownFields(t *testing.T) {
 		t.Errorf("unknown field: %d want 400", rec.Code)
 	}
 }
+
+func TestAdmin_Reload_NoFunc(t *testing.T) {
+	api := newAdminTestAPI()
+	rec, body := doJSON(t, api, http.MethodPost, "/api/v1/admin/reload", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reload: %d %v", rec.Code, body)
+	}
+	if body["reloaded"].(bool) {
+		t.Error("no func installed should report reloaded:false")
+	}
+}
+
+func TestAdmin_Reload_InvokesFunc(t *testing.T) {
+	api := newAdminTestAPI()
+	called := false
+	api.ReloadFunc = func() error { called = true; return nil }
+	rec, body := doJSON(t, api, http.MethodPost, "/api/v1/admin/reload", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reload: %d %v", rec.Code, body)
+	}
+	if !called {
+		t.Error("ReloadFunc was not invoked")
+	}
+}
+
+func TestAdmin_PreviewSubdomainAutoProvision(t *testing.T) {
+	api := newAdminTestAPI()
+	api.PreviewBase = "preview.gocodealone.com"
+	_, got := doJSON(t, api, http.MethodPost, "/api/v1/admin/tenants", map[string]string{"slug": "acme"})
+	id := int64(got["ID"].(float64))
+
+	rec, body := doJSON(t, api, http.MethodGet,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(id, 10)+"/domains", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list domains: %d %v", rec.Code, body)
+	}
+	doms, _ := body["domains"].([]any)
+	if len(doms) != 1 {
+		t.Fatalf("expected 1 preview domain auto-provisioned; got %d", len(doms))
+	}
+	first := doms[0].(map[string]any)
+	if first["Host"] != "acme.preview.gocodealone.com" {
+		t.Errorf("preview host = %v; want acme.preview.gocodealone.com", first["Host"])
+	}
+	if first["Kind"] != "preview" {
+		t.Errorf("kind = %v; want preview", first["Kind"])
+	}
+}
+
+func TestAdmin_PageCRUD(t *testing.T) {
+	api := newAdminTestAPI()
+	_, gotT := doJSON(t, api, http.MethodPost, "/api/v1/admin/tenants", map[string]string{"slug": "a"})
+	tid := int64(gotT["ID"].(float64))
+
+	// Create.
+	rec, gotP := doJSON(t, api, http.MethodPost,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages",
+		map[string]string{"path": "/welcome", "title": "Welcome", "body_html": "<h1>Hi</h1>"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create page: %d %v", rec.Code, gotP)
+	}
+	pid := int64(gotP["ID"].(float64))
+
+	// Update.
+	rec, gotU := doJSON(t, api, http.MethodPut,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages/"+strconv.FormatInt(pid, 10),
+		map[string]string{"title": "Updated"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update page: %d %v", rec.Code, gotU)
+	}
+	if gotU["Title"] != "Updated" {
+		t.Errorf("update title = %v; want Updated", gotU["Title"])
+	}
+
+	// List.
+	rec, gotL := doJSON(t, api, http.MethodGet,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d", rec.Code)
+	}
+	pages, _ := gotL["pages"].([]any)
+	if len(pages) != 1 {
+		t.Errorf("list: %d pages want 1", len(pages))
+	}
+
+	// Delete.
+	rec, _ = doJSON(t, api, http.MethodDelete,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages/"+strconv.FormatInt(pid, 10), nil)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("delete: %d want 204", rec.Code)
+	}
+}
+
+func TestAdmin_PageCrossTenant_404(t *testing.T) {
+	api := newAdminTestAPI()
+	_, gotA := doJSON(t, api, http.MethodPost, "/api/v1/admin/tenants", map[string]string{"slug": "a"})
+	_, gotB := doJSON(t, api, http.MethodPost, "/api/v1/admin/tenants", map[string]string{"slug": "b"})
+	aID := int64(gotA["ID"].(float64))
+	bID := int64(gotB["ID"].(float64))
+
+	// A creates page.
+	_, gotP := doJSON(t, api, http.MethodPost,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(aID, 10)+"/pages",
+		map[string]string{"path": "/p", "title": "P", "body_html": "x"})
+	pid := int64(gotP["ID"].(float64))
+
+	// B tries to update A's page → 404.
+	rec, _ := doJSON(t, api, http.MethodPut,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(bID, 10)+"/pages/"+strconv.FormatInt(pid, 10),
+		map[string]string{"title": "hijacked"})
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("cross-tenant update: %d want 404", rec.Code)
+	}
+}
+
+func TestAdmin_CreatePage_ValidationError(t *testing.T) {
+	api := newAdminTestAPI()
+	_, gotT := doJSON(t, api, http.MethodPost, "/api/v1/admin/tenants", map[string]string{"slug": "a"})
+	tid := int64(gotT["ID"].(float64))
+
+	// Missing title.
+	rec, _ := doJSON(t, api, http.MethodPost,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages",
+		map[string]string{"path": "/p"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing title: %d want 400", rec.Code)
+	}
+}

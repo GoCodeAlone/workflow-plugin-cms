@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -21,9 +20,20 @@ import (
 // Tenant scope for page endpoints comes from the URL path
 // (/api/v1/admin/tenants/:id/pages...) — V12 isolation is enforced
 // by passing tenantID as the first arg after ctx into every store call.
+//
+// ReloadFunc is optional; when set, POST /api/v1/admin/reload invokes
+// it to flush in-memory caches (tenant resolver, page renderer). See
+// SPEC T31.
+//
+// PreviewBase is the FQDN suffix for auto-provisioned preview
+// subdomains. When non-empty, CreateTenant also creates a
+// `<slug>.<preview_base>` domain row (V18 / T32). Empty disables
+// auto-provision.
 type AdminAPI struct {
-	tenants store.TenantAdminStore
-	pages   store.PageStore
+	tenants     store.TenantAdminStore
+	pages       store.PageStore
+	ReloadFunc  func() error
+	PreviewBase string
 }
 
 // NewAdminAPI returns a handler using the given stores. Either store
@@ -37,10 +47,14 @@ func NewAdminAPI(tenants store.TenantAdminStore, pages store.PageStore) *AdminAP
 func (a *AdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin")
 	switch {
+	case path == "/reload" && r.Method == http.MethodPost:
+		a.reload(w, r)
+
 	case path == "/tenants" && r.Method == http.MethodGet:
 		a.listTenants(w, r)
 	case path == "/tenants" && r.Method == http.MethodPost:
 		a.createTenant(w, r)
+
 	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/domains") && r.Method == http.MethodGet:
 		a.listDomains(w, r, extractTenantID(path))
 	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/domains") && r.Method == http.MethodPost:
@@ -48,11 +62,35 @@ func (a *AdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/tenants/") && strings.Contains(path, "/domains/") && r.Method == http.MethodDelete:
 		tid, did := extractTenantAndDomainID(path)
 		a.deleteDomain(w, r, tid, did)
+
 	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/pages") && r.Method == http.MethodGet:
 		a.listPages(w, r, extractTenantID(path))
+	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/pages") && r.Method == http.MethodPost:
+		a.createPage(w, r, extractTenantID(path))
+	case strings.HasPrefix(path, "/tenants/") && strings.Contains(path, "/pages/") && r.Method == http.MethodPut:
+		tid, pid := extractTenantAndPageID(path)
+		a.updatePage(w, r, tid, pid)
+	case strings.HasPrefix(path, "/tenants/") && strings.Contains(path, "/pages/") && r.Method == http.MethodDelete:
+		tid, pid := extractTenantAndPageID(path)
+		a.deletePage(w, r, tid, pid)
+
 	default:
 		writeJSONError(w, http.StatusNotFound, "not_found", "route not found")
 	}
+}
+
+// --- Reload handler -----------------------------------------------------
+
+func (a *AdminAPI) reload(w http.ResponseWriter, r *http.Request) {
+	if a.ReloadFunc == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"reloaded": false, "reason": "no reload func installed"})
+		return
+	}
+	if err := a.ReloadFunc(); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reloaded": true})
 }
 
 // --- Tenant handlers ----------------------------------------------------
@@ -86,6 +124,13 @@ func (a *AdminAPI) createTenant(w http.ResponseWriter, r *http.Request) {
 	if err := a.tenants.CreateTenant(r.Context(), t); err != nil {
 		statusFromTenantErr(w, err)
 		return
+	}
+	// Auto-provision preview subdomain (T32 / V18).
+	if a.PreviewBase != "" {
+		previewHost := strings.ToLower(t.Slug) + "." + strings.ToLower(strings.TrimPrefix(a.PreviewBase, "."))
+		_ = a.tenants.CreateDomain(r.Context(), &store.Domain{
+			TenantID: t.ID, Host: previewHost, Kind: "preview",
+		})
 	}
 	writeJSON(w, http.StatusCreated, t)
 }
@@ -173,6 +218,140 @@ func (a *AdminAPI) listPages(w http.ResponseWriter, r *http.Request, tenantID in
 	writeJSON(w, http.StatusOK, map[string]any{"pages": list})
 }
 
+// --- Page write handlers ------------------------------------------------
+
+type pageBody struct {
+	Subsite    string          `json:"subsite"`
+	Path       string          `json:"path"`
+	Title      string          `json:"title"`
+	BodyHTML   string          `json:"body_html"`
+	BodyBlocks json.RawMessage `json:"body_blocks"`
+	Status     string          `json:"status"`
+}
+
+func (a *AdminAPI) createPage(w http.ResponseWriter, r *http.Request, tenantID int64) {
+	if tenantID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid tenant id")
+		return
+	}
+	if a.pages == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "unavailable", "page store not configured")
+		return
+	}
+	var body pageBody
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	p := &store.Page{
+		TenantID:   tenantID,
+		Subsite:    body.Subsite,
+		Path:       body.Path,
+		Title:      body.Title,
+		BodyHTML:   body.BodyHTML,
+		BodyBlocks: body.BodyBlocks,
+		Status:     store.PageStatus(body.Status),
+	}
+	if err := p.Validate(); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := a.pages.Create(r.Context(), tenantID, p); err != nil {
+		statusFromPageErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
+}
+
+func (a *AdminAPI) updatePage(w http.ResponseWriter, r *http.Request, tenantID, pageID int64) {
+	if tenantID == 0 || pageID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid id")
+		return
+	}
+	if a.pages == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "unavailable", "page store not configured")
+		return
+	}
+	existing, err := a.pages.Get(r.Context(), tenantID, pageID)
+	if err != nil {
+		statusFromPageErr(w, err)
+		return
+	}
+	var body pageBody
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if body.Path != "" {
+		existing.Path = body.Path
+	}
+	if body.Title != "" {
+		existing.Title = body.Title
+	}
+	if body.Subsite != "" {
+		existing.Subsite = body.Subsite
+	}
+	if body.BodyHTML != "" {
+		existing.BodyHTML = body.BodyHTML
+	}
+	if len(body.BodyBlocks) > 0 {
+		existing.BodyBlocks = body.BodyBlocks
+	}
+	if body.Status != "" {
+		existing.Status = store.PageStatus(body.Status)
+	}
+	if err := existing.Validate(); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := a.pages.Update(r.Context(), tenantID, existing); err != nil {
+		statusFromPageErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, existing)
+}
+
+func (a *AdminAPI) deletePage(w http.ResponseWriter, r *http.Request, tenantID, pageID int64) {
+	if tenantID == 0 || pageID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid id")
+		return
+	}
+	if a.pages == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "unavailable", "page store not configured")
+		return
+	}
+	if err := a.pages.Delete(r.Context(), tenantID, pageID); err != nil {
+		statusFromPageErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func statusFromPageErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeJSONError(w, http.StatusNotFound, "not_found", err.Error())
+	case errors.Is(err, store.ErrPathConflict):
+		writeJSONError(w, http.StatusConflict, "conflict", err.Error())
+	default:
+		writeJSONError(w, http.StatusInternalServerError, "internal", err.Error())
+	}
+}
+
+func extractTenantAndPageID(path string) (int64, int64) {
+	parts := strings.Split(path, "/")
+	var tid, pid int64
+	for i, p := range parts {
+		if p == "tenants" && i+1 < len(parts) {
+			tid, _ = strconv.ParseInt(parts[i+1], 10, 64)
+		}
+		if p == "pages" && i+1 < len(parts) {
+			pid, _ = strconv.ParseInt(parts[i+1], 10, 64)
+		}
+	}
+	return tid, pid
+}
+
 // --- helpers ------------------------------------------------------------
 
 func extractTenantID(path string) int64 {
@@ -229,5 +408,3 @@ func statusFromTenantErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// Ensure context import is used.
-var _ = context.Background

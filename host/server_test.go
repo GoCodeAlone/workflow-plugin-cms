@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -115,6 +117,83 @@ func TestServer_TenantResolver_Vanity(t *testing.T) {
 	// by the cache test below.
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404 placeholder for resolved tenant; got %d", rec.Code)
+	}
+}
+
+func TestServer_TenantStaticBundleServesIndex(t *testing.T) {
+	root := t.TempDir()
+	versionDir := filepath.Join(root, "gocodealone", "v1.0.0")
+	if err := os.MkdirAll(filepath.Join(versionDir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, "index.html"), []byte("<h1>GoCodeAlone</h1>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, "assets", "app.css"), []byte("body{color:#111}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(versionDir, filepath.Join(root, "gocodealone", "current")); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{TenantResolverStore: r, BundleRoot: root})
+
+	rec := doReqWithHost(t, s, "GET", "/", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "GoCodeAlone") {
+		t.Fatalf("index body = %q, want static bundle content", rec.Body.String())
+	}
+
+	rec = doReqWithHost(t, s, "GET", "/assets/app.css", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("asset status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "color") {
+		t.Fatalf("asset body = %q, want CSS content", rec.Body.String())
+	}
+}
+
+func TestServer_AdminCreatedTenantResolvesStaticBundle(t *testing.T) {
+	root := t.TempDir()
+	versionDir := filepath.Join(root, "acme", "v1.0.0")
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, "index.html"), []byte("hello acme"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(versionDir, filepath.Join(root, "acme", "current")); err != nil {
+		t.Fatal(err)
+	}
+	s := New(Config{BundleRoot: root})
+
+	rec := doReq(t, s, "POST", "/api/v1/admin/tenants", "application/json", strings.NewReader(`{"slug":"acme"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create tenant: got %d body=%q, want 201", rec.Code, rec.Body.String())
+	}
+	var tenant map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &tenant); err != nil {
+		t.Fatal(err)
+	}
+	tid := int64(tenant["ID"].(float64))
+	rec = doReq(t, s, "POST", "/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/domains", "application/json", strings.NewReader(`{"host":"acme.example","kind":"vanity"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create domain: got %d body=%q, want 201", rec.Code, rec.Body.String())
+	}
+
+	rec = doReqWithHost(t, s, "GET", "/", "acme.example", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tenant static status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "hello acme") {
+		t.Fatalf("tenant static body = %q, want activated bundle", rec.Body.String())
 	}
 }
 
@@ -293,6 +372,20 @@ func TestServer_Audit_OnlyWhenKeySet(t *testing.T) {
 func doReq(t *testing.T, h http.Handler, method, target, contentType string, body io.Reader) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, target, body)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	} else if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func doReqWithHost(t *testing.T, h http.Handler, method, target, host, contentType string, body io.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, "http://"+host+target, body)
+	req.Host = host
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	} else if body != nil {

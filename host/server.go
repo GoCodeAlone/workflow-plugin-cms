@@ -11,6 +11,8 @@ package host
 import (
 	"context"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,6 +104,9 @@ type Server struct {
 func New(cfg Config) *Server {
 	if cfg.TenantsAdmin == nil {
 		cfg.TenantsAdmin = store.NewMemoryTenantAdminStore()
+	}
+	if cfg.TenantResolverStore == nil {
+		cfg.TenantResolverStore = tenantAdminResolver{admin: cfg.TenantsAdmin}
 	}
 	if cfg.Pages == nil {
 		cfg.Pages = store.NewMemoryPageStore()
@@ -223,16 +228,55 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tenant-resolved content path. For now we 404 with a neutral body
-	// — static serve + CMS page rendering wires into the same fall-
-	// through table as the resolver matures.
 	tenant, ok := s.resolveTenant(r.Context(), r.Host)
 	if !ok {
 		http.Error(rec, "not found", http.StatusNotFound)
 		return
 	}
 	tenantSlug = tenant.TenantSlug
+	if s.serveStaticBundle(rec, r, tenant.TenantSlug) {
+		return
+	}
 	http.Error(rec, "tenant resolved but no content path mounted yet", http.StatusNotFound)
+}
+
+func (s *Server) serveStaticBundle(w http.ResponseWriter, r *http.Request, slug string) bool {
+	filePath, ok := resolveBundlePath(s.cfg.BundleRoot, slug, r.URL.Path)
+	if !ok {
+		return false
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		return false
+	}
+	http.ServeContent(w, r, filepath.Base(filePath), info.ModTime(), f)
+	return true
+}
+
+func resolveBundlePath(bundleRoot, slug, urlPath string) (string, bool) {
+	if bundleRoot == "" || slug == "" {
+		return "", false
+	}
+	tenantRoot := filepath.Join(bundleRoot, slug, "current")
+	rel := strings.TrimPrefix(urlPath, "/")
+	if rel == "" || strings.HasSuffix(urlPath, "/") {
+		rel = filepath.Join(rel, "index.html")
+	}
+	cleaned := filepath.Clean(rel)
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "..\\") {
+		return "", false
+	}
+	full := filepath.Join(tenantRoot, cleaned)
+	relToRoot, err := filepath.Rel(tenantRoot, full)
+	if err != nil || strings.HasPrefix(relToRoot, "..") {
+		return "", false
+	}
+	return full, true
 }
 
 // extractTenantIDFromPath parses /api/v1/admin/tenants/:id/upload →
@@ -309,3 +353,52 @@ func (s *Server) resolveTenant(ctx context.Context, host string) (TenantInfo, bo
 // AdminAPI returns the underlying admin handler (for tests + advanced
 // wiring).
 func (s *Server) AdminAPI() *internal.AdminAPI { return s.admin }
+
+type tenantAdminResolver struct {
+	admin store.TenantAdminStore
+}
+
+func (r tenantAdminResolver) Lookup(ctx context.Context, host string) (TenantInfo, bool) {
+	if r.admin == nil {
+		return TenantInfo{}, false
+	}
+	host = strings.ToLower(strings.TrimSpace(strings.Split(host, ":")[0]))
+	tenants, err := r.admin.ListTenants(ctx)
+	if err != nil {
+		return TenantInfo{}, false
+	}
+	for _, tenant := range tenants {
+		domains, err := r.admin.ListDomains(ctx, tenant.ID)
+		if err != nil {
+			continue
+		}
+		for _, domain := range domains {
+			if strings.EqualFold(domain.Host, host) {
+				return TenantInfo{
+					TenantID:     tenant.ID,
+					TenantSlug:   tenant.Slug,
+					SubsiteLabel: domain.SubsiteLabel,
+					Kind:         domain.Kind,
+				}, true
+			}
+		}
+	}
+	return TenantInfo{}, false
+}
+
+func (r tenantAdminResolver) LookupBySlug(ctx context.Context, slug string) (TenantInfo, bool) {
+	if r.admin == nil {
+		return TenantInfo{}, false
+	}
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	tenants, err := r.admin.ListTenants(ctx)
+	if err != nil {
+		return TenantInfo{}, false
+	}
+	for _, tenant := range tenants {
+		if strings.EqualFold(tenant.Slug, slug) {
+			return TenantInfo{TenantID: tenant.ID, TenantSlug: tenant.Slug, Kind: "preview"}, true
+		}
+	}
+	return TenantInfo{}, false
+}

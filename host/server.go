@@ -12,6 +12,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -43,6 +44,17 @@ type Config struct {
 	// HMACSecret signs ingest webhooks (SPEC V8). Required for the
 	// ingest endpoint to function; if empty, the endpoint returns 503.
 	HMACSecret string
+
+	// AdminHost, when set, moves the admin UI to https://<AdminHost>/
+	// and requires all admin API/media/UI requests to use that host.
+	// This avoids exposing admin under public tenant paths such as
+	// /admin on the marketing site.
+	AdminHost string
+
+	// AdminAuth gates admin UI/API/media requests. Production should
+	// wire this to workflow-plugin-auth session/JWT validation. When
+	// AdminHost is set and AdminAuth is nil, admin requests fail closed.
+	AdminAuth func(*http.Request) bool
 
 	// OnIngest is called with the verified payload. Production wires
 	// this to a Fetcher; tests typically pass a no-op.
@@ -95,6 +107,7 @@ type Server struct {
 	metrics    *monitoring.Counters
 	audit      *audit.Logger
 	adminUI    http.Handler
+	adminRoot  http.Handler
 	mu         sync.RWMutex
 	cached     map[string]TenantInfo // host:lookup cache for the simple resolver
 	cachedSlug map[string]TenantInfo
@@ -138,7 +151,8 @@ func New(cfg Config) *Server {
 	if cfg.AuditSignKey != "" {
 		s.audit = audit.New(cfg.AuditSignKey, nil)
 	}
-	s.adminUI = http.StripPrefix("/admin", adminui.Handler())
+	s.adminRoot = adminui.Handler()
+	s.adminUI = http.StripPrefix("/admin", s.adminRoot)
 
 	return s
 }
@@ -197,18 +211,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Admin web UI — embedded static files.
-	if path == "/admin" {
-		http.Redirect(rec, r, "/admin/", http.StatusMovedPermanently)
-		return
-	}
-	if strings.HasPrefix(path, "/admin/") {
-		s.adminUI.ServeHTTP(rec, r)
+	adminHost := s.isAdminHost(r.Host)
+	if s.cfg.AdminHost != "" && strings.HasPrefix(path, "/admin") && !adminHost {
+		http.NotFound(rec, r)
 		return
 	}
 
 	// Media upload route: POST /api/v1/admin/tenants/:id/upload.
 	if strings.HasPrefix(path, "/api/v1/admin/tenants/") && strings.HasSuffix(path, "/upload") {
+		if !s.authorizeAdmin(rec, r, adminHost) {
+			return
+		}
 		if s.media == nil {
 			http.Error(rec, "media backend not configured", http.StatusServiceUnavailable)
 			return
@@ -219,12 +232,42 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.HasPrefix(path, "/api/v1/admin/") || path == "/api/v1/admin" {
+		if !s.authorizeAdmin(rec, r, adminHost) {
+			return
+		}
 		s.admin.ServeHTTP(rec, r)
 		return
 	}
 
 	if path == "/api/v1/ingest/release" {
 		s.ingest.ServeHTTP(rec, r)
+		return
+	}
+
+	if adminHost {
+		if !s.authorizeAdmin(rec, r, true) {
+			return
+		}
+		if path == "/admin" || path == "/admin/" {
+			http.Redirect(rec, r, "/", http.StatusMovedPermanently)
+			return
+		}
+		s.adminRoot.ServeHTTP(rec, r)
+		return
+	}
+
+	// Legacy path mount for hosts that have not moved admin to a
+	// dedicated hostname yet. If AdminHost is set this branch is
+	// unreachable because public /admin paths are rejected above.
+	if path == "/admin" {
+		http.Redirect(rec, r, "/admin/", http.StatusMovedPermanently)
+		return
+	}
+	if strings.HasPrefix(path, "/admin/") {
+		if !s.authorizeAdmin(rec, r, adminHost) {
+			return
+		}
+		s.adminUI.ServeHTTP(rec, r)
 		return
 	}
 
@@ -240,6 +283,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.Error(rec, "tenant resolved but no content path mounted yet", http.StatusNotFound)
 }
 
+func (s *Server) isAdminHost(host string) bool {
+	if s.cfg.AdminHost == "" {
+		return false
+	}
+	got := strings.ToLower(strings.TrimSpace(strings.Split(host, ":")[0]))
+	want := strings.ToLower(strings.TrimSpace(s.cfg.AdminHost))
+	return got == want
+}
+
+func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request, adminHost bool) bool {
+	if s.cfg.AdminHost != "" && !adminHost {
+		http.NotFound(w, r)
+		return false
+	}
+	if s.cfg.AdminHost != "" && s.cfg.AdminAuth == nil {
+		http.Error(w, "admin auth is not configured", http.StatusServiceUnavailable)
+		return false
+	}
+	if s.cfg.AdminAuth != nil && !s.cfg.AdminAuth(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
 func (s *Server) serveStaticBundle(w http.ResponseWriter, r *http.Request, slug string) bool {
 	filePath, ok := resolveBundlePath(s.cfg.BundleRoot, slug, r.URL.Path)
 	if !ok {
@@ -247,7 +315,15 @@ func (s *Server) serveStaticBundle(w http.ResponseWriter, r *http.Request, slug 
 	}
 	f, err := os.Open(filePath)
 	if err != nil {
-		return false
+		if spaIndexPath, spaOK := resolveSPAFallbackPath(s.cfg.BundleRoot, slug, r); spaOK {
+			filePath = spaIndexPath
+			f, err = os.Open(filePath)
+			if err != nil {
+				return false
+			}
+		} else {
+			return false
+		}
 	}
 	defer f.Close()
 	info, err := f.Stat()
@@ -256,6 +332,16 @@ func (s *Server) serveStaticBundle(w http.ResponseWriter, r *http.Request, slug 
 	}
 	http.ServeContent(w, r, filepath.Base(filePath), info.ModTime(), f)
 	return true
+}
+
+func resolveSPAFallbackPath(bundleRoot, slug string, r *http.Request) (string, bool) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return "", false
+	}
+	if path.Ext(r.URL.Path) != "" {
+		return "", false
+	}
+	return resolveBundlePath(bundleRoot, slug, "/")
 }
 
 func resolveBundlePath(bundleRoot, slug, urlPath string) (string, bool) {

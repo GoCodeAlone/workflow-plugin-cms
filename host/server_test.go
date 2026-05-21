@@ -160,6 +160,108 @@ func TestServer_TenantStaticBundleServesIndex(t *testing.T) {
 	}
 }
 
+func TestServer_TenantStaticBundleServesSPAFallback(t *testing.T) {
+	root := t.TempDir()
+	versionDir := filepath.Join(root, "gocodealone", "v1.0.0")
+	if err := os.MkdirAll(filepath.Join(versionDir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, "index.html"), []byte("<h1>GoCodeAlone SPA</h1>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(versionDir, filepath.Join(root, "gocodealone", "current")); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"www.gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{TenantResolverStore: r, BundleRoot: root})
+
+	rec := doReqWithHost(t, s, "GET", "/platform", "www.gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SPA route status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "GoCodeAlone SPA") {
+		t.Fatalf("SPA route body = %q, want index.html", rec.Body.String())
+	}
+
+	rec = doReqWithHost(t, s, "GET", "/assets/missing.js", "www.gocodealone.tech", "", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing asset status: got %d body=%q, want 404", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServer_AdminHostRootRequiresAuth(t *testing.T) {
+	s := New(Config{
+		AdminHost: "admin.example",
+		AdminAuth: func(r *http.Request) bool {
+			return false
+		},
+	})
+
+	rec := doReqWithHost(t, s, "GET", "/", "admin.example", "", nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("admin root without auth: got %d body=%q, want 401", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServer_AdminHostRootServesAdminUIWhenAuthorized(t *testing.T) {
+	s := New(Config{
+		AdminHost: "admin.example",
+		AdminAuth: func(r *http.Request) bool {
+			return true
+		},
+	})
+
+	rec := doReqWithHost(t, s, "GET", "/", "admin.example", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin root with auth: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Multisite Admin") {
+		t.Fatalf("admin root body = %q, want admin UI", rec.Body.String())
+	}
+}
+
+func TestServer_PublicAdminPathNotExposedWhenAdminHostConfigured(t *testing.T) {
+	s := New(Config{
+		AdminHost: "admin.example",
+		AdminAuth: func(r *http.Request) bool {
+			return true
+		},
+	})
+
+	rec := doReqWithHost(t, s, "GET", "/admin/", "www.example", "", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("public /admin/: got %d body=%q, want 404", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServer_AdminAPIRequiresAuthWhenAdminHostConfigured(t *testing.T) {
+	s := New(Config{
+		AdminHost: "admin.example",
+		AdminAuth: func(r *http.Request) bool {
+			return r.Header.Get("Authorization") == "Bearer ok"
+		},
+	})
+
+	rec := doReqWithHost(t, s, "GET", "/api/v1/admin/tenants", "admin.example", "", nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("admin API without auth: got %d body=%q, want 401", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://admin.example/api/v1/admin/tenants", nil)
+	req.Host = "admin.example"
+	req.Header.Set("Authorization", "Bearer ok")
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin API with auth: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+}
+
 func TestServer_AdminCreatedTenantResolvesStaticBundle(t *testing.T) {
 	root := t.TempDir()
 	versionDir := filepath.Join(root, "acme", "v1.0.0")

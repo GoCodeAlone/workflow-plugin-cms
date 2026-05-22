@@ -244,6 +244,26 @@ func TestAdmin_PageCRUD(t *testing.T) {
 		t.Errorf("update title = %v; want Updated", gotU["Title"])
 	}
 
+	rec, gotU = doJSON(t, api, http.MethodPut,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages/"+strconv.FormatInt(pid, 10),
+		map[string]string{"body_html": "", "subsite": ""})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear page fields: %d %v", rec.Code, gotU)
+	}
+	if gotU["BodyHTML"] != "" {
+		t.Errorf("BodyHTML = %v; want cleared empty string", gotU["BodyHTML"])
+	}
+
+	// Get detail.
+	rec, gotG := doJSON(t, api, http.MethodGet,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages/"+strconv.FormatInt(pid, 10), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get page: %d %v", rec.Code, gotG)
+	}
+	if gotG["Title"] != "Updated" {
+		t.Errorf("get title = %v; want Updated", gotG["Title"])
+	}
+
 	// List.
 	rec, gotL := doJSON(t, api, http.MethodGet,
 		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages", nil)

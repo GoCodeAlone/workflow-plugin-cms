@@ -67,6 +67,9 @@ func (a *AdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.listPages(w, r, extractTenantID(path))
 	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/pages") && r.Method == http.MethodPost:
 		a.createPage(w, r, extractTenantID(path))
+	case strings.HasPrefix(path, "/tenants/") && strings.Contains(path, "/pages/") && r.Method == http.MethodGet:
+		tid, pid := extractTenantAndPageID(path)
+		a.getPage(w, r, tid, pid)
 	case strings.HasPrefix(path, "/tenants/") && strings.Contains(path, "/pages/") && r.Method == http.MethodPut:
 		tid, pid := extractTenantAndPageID(path)
 		a.updatePage(w, r, tid, pid)
@@ -229,6 +232,15 @@ type pageBody struct {
 	Status     string          `json:"status"`
 }
 
+type pageUpdateBody struct {
+	Subsite    *string         `json:"subsite"`
+	Path       *string         `json:"path"`
+	Title      *string         `json:"title"`
+	BodyHTML   *string         `json:"body_html"`
+	BodyBlocks json.RawMessage `json:"body_blocks"`
+	Status     *string         `json:"status"`
+}
+
 func (a *AdminAPI) createPage(w http.ResponseWriter, r *http.Request, tenantID int64) {
 	if tenantID == 0 {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid tenant id")
@@ -263,6 +275,23 @@ func (a *AdminAPI) createPage(w http.ResponseWriter, r *http.Request, tenantID i
 	writeJSON(w, http.StatusCreated, p)
 }
 
+func (a *AdminAPI) getPage(w http.ResponseWriter, r *http.Request, tenantID, pageID int64) {
+	if tenantID == 0 || pageID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid id")
+		return
+	}
+	if a.pages == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "unavailable", "page store not configured")
+		return
+	}
+	p, err := a.pages.Get(r.Context(), tenantID, pageID)
+	if err != nil {
+		statusFromPageErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
 func (a *AdminAPI) updatePage(w http.ResponseWriter, r *http.Request, tenantID, pageID int64) {
 	if tenantID == 0 || pageID == 0 {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid id")
@@ -277,28 +306,28 @@ func (a *AdminAPI) updatePage(w http.ResponseWriter, r *http.Request, tenantID, 
 		statusFromPageErr(w, err)
 		return
 	}
-	var body pageBody
+	var body pageUpdateBody
 	if err := decodeJSON(r, &body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	if body.Path != "" {
-		existing.Path = body.Path
+	if body.Path != nil {
+		existing.Path = *body.Path
 	}
-	if body.Title != "" {
-		existing.Title = body.Title
+	if body.Title != nil {
+		existing.Title = *body.Title
 	}
-	if body.Subsite != "" {
-		existing.Subsite = body.Subsite
+	if body.Subsite != nil {
+		existing.Subsite = *body.Subsite
 	}
-	if body.BodyHTML != "" {
-		existing.BodyHTML = body.BodyHTML
+	if body.BodyHTML != nil {
+		existing.BodyHTML = *body.BodyHTML
 	}
 	if len(body.BodyBlocks) > 0 {
 		existing.BodyBlocks = body.BodyBlocks
 	}
-	if body.Status != "" {
-		existing.Status = store.PageStatus(body.Status)
+	if body.Status != nil {
+		existing.Status = store.PageStatus(*body.Status)
 	}
 	if err := existing.Validate(); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -407,4 +436,3 @@ func statusFromTenantErr(w http.ResponseWriter, err error) {
 		writeJSONError(w, http.StatusInternalServerError, "internal", err.Error())
 	}
 }
-

@@ -20,6 +20,7 @@ h1, h2 { margin: 0; }
 h2 { margin-top: 1.5rem; }
 
 section { background: white; padding: 1.5rem; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-bottom: 1.5rem; }
+section.editor-panel { background: #fbfbfb; border: 1px solid #e5e5e5; box-shadow: none; }
 
 table {
   width: 100%;
@@ -59,6 +60,25 @@ form > button {
   font: inherit;
 }
 form > button:hover { background: #155bb5; }
+.form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.form-actions button {
+  padding: 0.5rem 1rem;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font: inherit;
+}
+.form-actions button:first-child {
+  background: #1a73e8;
+  color: white;
+  border-color: #1a73e8;
+}
 
 button.danger { background: #dc3545; }
 button.danger:hover { background: #b02a37; }
@@ -88,3 +108,10 @@ button.link {
 
 details { margin-top: 1rem; }
 details summary { cursor: pointer; padding: 0.5rem 0; }
+#page-preview {
+  width: 100%;
+  min-height: 20rem;
+  margin-top: 1rem;
+  border: 1px solid #ddd;
+  background: white;
+}

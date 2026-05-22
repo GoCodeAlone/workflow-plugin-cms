@@ -29,7 +29,9 @@ const api = {
   createDomain(tid, b) { return this.req("POST", "/tenants/" + tid + "/domains", b); },
   deleteDomain(tid, did) { return this.req("DELETE", "/tenants/" + tid + "/domains/" + did); },
   listPages(tid) { return this.req("GET", "/tenants/" + tid + "/pages"); },
+  getPage(tid, pid) { return this.req("GET", "/tenants/" + tid + "/pages/" + pid); },
   createPage(tid, b) { return this.req("POST", "/tenants/" + tid + "/pages", b); },
+  updatePage(tid, pid, b) { return this.req("PUT", "/tenants/" + tid + "/pages/" + pid, b); },
   deletePage(tid, pid) { return this.req("DELETE", "/tenants/" + tid + "/pages/" + pid); },
   reload() { return this.req("POST", "/reload"); },
 };
@@ -128,19 +130,45 @@ async function refreshPages() {
         "<td>" + escapeHTML(p.Path) + "</td>" +
         "<td>" + escapeHTML(p.Title) + "</td>" +
         "<td>" + escapeHTML(p.Status) + "</td>" +
-        "<td><button class=\"danger\" data-page=\"" + p.ID + "\">delete</button></td>";
+        "<td><button class=\"link\" data-edit-page=\"" + p.ID + "\">edit</button> " +
+        "<button class=\"danger\" data-delete-page=\"" + p.ID + "\">delete</button></td>";
       tbody.appendChild(tr);
     }
     tbody.addEventListener("click", async (ev) => {
-      const btn = ev.target.closest("button[data-page]");
-      if (!btn) return;
-      if (!confirm("Delete this page?")) return;
+      const edit = ev.target.closest("button[data-edit-page]");
+      if (edit) {
+        await openPageEditor(parseInt(edit.dataset.editPage, 10));
+        return;
+      }
+      const btn = ev.target.closest("button[data-delete-page]");
+      if (!btn || !confirm("Delete this page?")) return;
       try {
-        await api.deletePage(currentTenant.ID, parseInt(btn.dataset.page, 10));
+        await api.deletePage(currentTenant.ID, parseInt(btn.dataset.deletePage, 10));
+        closePageEditor();
         refreshPages();
       } catch (e) { fail(e); }
     }, { once: true });
   } catch (e) { fail(e); }
+}
+
+async function openPageEditor(pid) {
+  try {
+    const p = await api.getPage(currentTenant.ID, pid);
+    const form = $("#page-editor-form");
+    form.elements.id.value = p.ID;
+    form.elements.path.value = p.Path || "";
+    form.elements.title.value = p.Title || "";
+    form.elements.status.value = p.Status || "draft";
+    form.elements.body_html.value = p.BodyHTML || "";
+    $("#page-preview").hidden = true;
+    $("#page-editor-section").hidden = false;
+  } catch (e) { fail(e); }
+}
+
+function closePageEditor() {
+  $("#page-editor-section").hidden = true;
+  $("#page-preview").hidden = true;
+  $("#page-editor-form").reset();
 }
 
 function escapeHTML(s) {
@@ -201,6 +229,30 @@ document.addEventListener("DOMContentLoaded", () => {
       refreshPages();
     } catch (e) { fail(e); }
   });
+
+  $("#page-editor-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(ev.target);
+    try {
+      const pid = parseInt(fd.get("id"), 10);
+      await api.updatePage(currentTenant.ID, pid, {
+        path: fd.get("path"),
+        title: fd.get("title"),
+        status: fd.get("status"),
+        body_html: fd.get("body_html"),
+      });
+      toast("Page saved", "ok");
+      refreshPages();
+    } catch (e) { fail(e); }
+  });
+
+  $("#btn-page-preview").addEventListener("click", () => {
+    const frame = $("#page-preview");
+    frame.srcdoc = $("#page-editor-form").elements.body_html.value || "";
+    frame.hidden = false;
+  });
+
+  $("#btn-page-editor-close").addEventListener("click", closePageEditor);
 
   $("#btn-back").addEventListener("click", () => {
     $("#tenant-detail-section").hidden = true;

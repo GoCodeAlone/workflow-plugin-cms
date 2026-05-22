@@ -56,6 +56,29 @@
         <thead><tr><th>ID</th><th>Path</th><th>Title</th><th>Status</th><th></th></tr></thead>
         <tbody id="pages-body"></tbody>
       </table>
+      <section id="page-editor-section" class="editor-panel" hidden>
+        <h4>Edit page</h4>
+        <form id="page-editor-form">
+          <input type="hidden" name="id">
+          <label>Path <input name="path" required placeholder="/welcome"></label>
+          <label>Title <input name="title" required placeholder="Welcome"></label>
+          <label>Status
+            <select name="status">
+              <option value="draft">draft</option>
+              <option value="published">published</option>
+            </select>
+          </label>
+          <label>Body HTML
+            <textarea name="body_html" rows="12" placeholder="<main>...</main>"></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit">Save page</button>
+            <button id="btn-page-preview" type="button">Preview</button>
+            <button id="btn-page-editor-close" type="button">Close</button>
+          </div>
+        </form>
+        <iframe id="page-preview" title="Page preview" hidden></iframe>
+      </section>
       <details>
         <summary>New page</summary>
         <form id="new-page-form">

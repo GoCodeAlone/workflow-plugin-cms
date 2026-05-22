@@ -16,6 +16,7 @@ import (
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/bundle"
 	"github.com/GoCodeAlone/workflow-plugin-cms/media"
+	"github.com/GoCodeAlone/workflow-plugin-cms/store"
 )
 
 func TestServer_Healthz_OK(t *testing.T) {
@@ -191,6 +192,172 @@ func TestServer_TenantStaticBundleServesSPAFallback(t *testing.T) {
 	rec = doReqWithHost(t, s, "GET", "/assets/missing.js", "www.gocodealone.tech", "", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing asset status: got %d body=%q, want 404", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServer_PublicCMSPageRendersAfterStaticMiss(t *testing.T) {
+	pages := store.NewMemoryPageStore()
+	if err := pages.Create(context.Background(), 1, &store.Page{
+		TenantID: 1,
+		Path:     "/about",
+		Title:    "About",
+		BodyHTML: "<main>about cms page</main>",
+		Status:   store.StatusPublished,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{TenantResolverStore: r, Pages: pages})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/about", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("CMS page status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "about cms page") {
+		t.Fatalf("CMS page body = %q, want stored HTML", rec.Body.String())
+	}
+}
+
+func TestServer_PublicCMSDraftDoesNotRender(t *testing.T) {
+	pages := store.NewMemoryPageStore()
+	if err := pages.Create(context.Background(), 1, &store.Page{
+		TenantID: 1,
+		Path:     "/draft",
+		Title:    "Draft",
+		BodyHTML: "<main>draft</main>",
+		Status:   store.StatusDraft,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{TenantResolverStore: r, Pages: pages})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/draft", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("draft page status: got %d body=%q, want 404", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServer_StaticExactWinsBeforeCMSPage(t *testing.T) {
+	root := t.TempDir()
+	versionDir := filepath.Join(root, "gocodealone", "v1.0.0")
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, "about.html"), []byte("static about"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(versionDir, filepath.Join(root, "gocodealone", "current")); err != nil {
+		t.Fatal(err)
+	}
+	pages := store.NewMemoryPageStore()
+	if err := pages.Create(context.Background(), 1, &store.Page{
+		TenantID: 1,
+		Path:     "/about.html",
+		Title:    "About",
+		BodyHTML: "cms about",
+		Status:   store.StatusPublished,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{TenantResolverStore: r, BundleRoot: root, Pages: pages})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/about.html", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("static exact status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "static about" {
+		t.Fatalf("body = %q, want exact static content", rec.Body.String())
+	}
+}
+
+func TestServer_CMSPageBeatsSPAFallback(t *testing.T) {
+	root := t.TempDir()
+	versionDir := filepath.Join(root, "gocodealone", "v1.0.0")
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, "index.html"), []byte("spa index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(versionDir, filepath.Join(root, "gocodealone", "current")); err != nil {
+		t.Fatal(err)
+	}
+	pages := store.NewMemoryPageStore()
+	if err := pages.Create(context.Background(), 1, &store.Page{
+		TenantID: 1,
+		Path:     "/platform",
+		Title:    "Platform",
+		BodyHTML: "cms platform",
+		Status:   store.StatusPublished,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{TenantResolverStore: r, BundleRoot: root, Pages: pages})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/platform", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("CMS before SPA status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "cms platform" {
+		t.Fatalf("body = %q, want CMS content before SPA fallback", rec.Body.String())
+	}
+}
+
+func TestServer_CMSSubsitePageFallsBackToRootSubsite(t *testing.T) {
+	pages := store.NewMemoryPageStore()
+	if err := pages.Create(context.Background(), 1, &store.Page{
+		TenantID: 1,
+		Subsite:  "",
+		Path:     "/contact",
+		Title:    "Root Contact",
+		BodyHTML: "root contact",
+		Status:   store.StatusPublished,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pages.Create(context.Background(), 1, &store.Page{
+		TenantID: 1,
+		Subsite:  "music",
+		Path:     "/tour",
+		Title:    "Tour",
+		BodyHTML: "music tour",
+		Status:   store.StatusPublished,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"band.example": {TenantID: 1, TenantSlug: "gocodealone", SubsiteLabel: "music", Kind: "vanity"},
+		},
+	}
+	s := New(Config{TenantResolverStore: r, Pages: pages})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/tour", "band.example", "", nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "music tour" {
+		t.Fatalf("subsite page: got status=%d body=%q, want music tour", rec.Code, rec.Body.String())
+	}
+	rec = doReqWithHost(t, s, http.MethodGet, "/contact", "band.example", "", nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "root contact" {
+		t.Fatalf("root fallback page: got status=%d body=%q, want root contact", rec.Code, rec.Body.String())
 	}
 }
 

@@ -10,6 +10,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path"
@@ -277,7 +278,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantSlug = tenant.TenantSlug
-	if s.serveStaticBundle(rec, r, tenant.TenantSlug) {
+	if s.serveStaticExactBundle(rec, r, tenant.TenantSlug) {
+		return
+	}
+	if s.serveCMSPage(rec, r, tenant) {
+		return
+	}
+	if s.serveSPAFallbackBundle(rec, r, tenant.TenantSlug) {
 		return
 	}
 	http.Error(rec, "tenant resolved but no content path mounted yet", http.StatusNotFound)
@@ -308,23 +315,31 @@ func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request, adminHos
 	return true
 }
 
-func (s *Server) serveStaticBundle(w http.ResponseWriter, r *http.Request, slug string) bool {
+func (s *Server) serveStaticExactBundle(w http.ResponseWriter, r *http.Request, slug string) bool {
 	filePath, ok := resolveBundlePath(s.cfg.BundleRoot, slug, r.URL.Path)
 	if !ok {
 		return false
 	}
 	f, err := os.Open(filePath)
 	if err != nil {
-		if spaIndexPath, spaOK := resolveSPAFallbackPath(s.cfg.BundleRoot, slug, r); spaOK {
-			filePath = spaIndexPath
-			f, err = os.Open(filePath)
-			if err != nil {
-				return false
-			}
-		} else {
-			return false
-		}
+		return false
 	}
+	return serveOpenedFile(w, r, filePath, f)
+}
+
+func (s *Server) serveSPAFallbackBundle(w http.ResponseWriter, r *http.Request, slug string) bool {
+	filePath, ok := resolveSPAFallbackPath(s.cfg.BundleRoot, slug, r)
+	if !ok {
+		return false
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		return false
+	}
+	return serveOpenedFile(w, r, filePath, f)
+}
+
+func serveOpenedFile(w http.ResponseWriter, r *http.Request, filePath string, f *os.File) bool {
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || info.IsDir() {
@@ -332,6 +347,35 @@ func (s *Server) serveStaticBundle(w http.ResponseWriter, r *http.Request, slug 
 	}
 	http.ServeContent(w, r, filepath.Base(filePath), info.ModTime(), f)
 	return true
+}
+
+func (s *Server) serveCMSPage(w http.ResponseWriter, r *http.Request, tenant TenantInfo) bool {
+	if s.cfg.Pages == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return false
+	}
+	candidates := []string{tenant.SubsiteLabel}
+	if tenant.SubsiteLabel != "" {
+		candidates = append(candidates, "")
+	}
+	for _, subsite := range candidates {
+		p, err := s.cfg.Pages.GetByPath(r.Context(), tenant.TenantID, subsite, r.URL.Path)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			http.Error(w, "page lookup failed", http.StatusInternalServerError)
+			return true
+		}
+		if p.Status != store.StatusPublished {
+			return false
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if r.Method != http.MethodHead {
+			_, _ = w.Write([]byte(p.BodyHTML))
+		}
+		return true
+	}
+	return false
 }
 
 func resolveSPAFallbackPath(bundleRoot, slug string, r *http.Request) (string, bool) {

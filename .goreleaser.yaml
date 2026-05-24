@@ -1,0 +1,30 @@
+version: 2
+project_name: workflow-plugin-cms
+before:
+  hooks:
+    - go mod tidy
+    - "sed -i.bak 's/\"version\": \".*\"/\"version\": \"{{ .Version }}\"/' plugin.json && rm -f plugin.json.bak"
+builds:
+  - id: workflow-plugin-cms
+    main: ./cmd/workflow-plugin-cms
+    binary: workflow-plugin-cms
+    env:
+      - CGO_ENABLED=0
+      - GOPRIVATE=github.com/GoCodeAlone/*
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/GoCodeAlone/workflow-plugin-cms/internal.Version={{.Version}}
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - plugin.json
+checksum:
+  name_template: "checksums.txt"
+release:
+  draft: false

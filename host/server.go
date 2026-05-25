@@ -1,11 +1,11 @@
 // Package host wires the workflow-plugin-cms components into a single
-// http.Handler suitable for a standalone multisite host binary.
+// http.Handler suitable for a standalone CMS host binary.
 //
 // The CMS plugin still ships as an external gRPC plugin (cmd/), but
-// for the gocodealone-multisite host the engine runs in-process — this
+// for standalone host deployments the engine runs in-process — this
 // package exposes the same component set without the gRPC boundary.
 //
-// Per gocodealone-multisite SPEC.md §I and T13/T14/T16/T28/T31/T32.
+// Per CMS host SPEC.md §I and T13/T14/T16/T28/T31/T32.
 package host
 
 import (
@@ -158,8 +158,8 @@ func New(cfg Config) *Server {
 	return s
 }
 
-// Metrics returns the Counters (for /metrics) — exposed so the host
-// binary can mount it on a separate path if needed.
+// Metrics returns the in-process request counters for host observability
+// adapters.
 func (s *Server) Metrics() *monitoring.Counters { return s.metrics }
 
 // Audit returns the audit Logger if configured. May be nil.
@@ -178,10 +178,9 @@ func (s *Server) flushCaches() error {
 // ServeHTTP routes a single request. Order of resolution:
 //
 //  1. /healthz (always served, even without a Host header match)
-//  2. /metrics — Prometheus exposition
-//  3. /api/v1/admin/* — handed to AdminAPI (+ media upload subroute)
-//  4. /api/v1/ingest/release — handed to IngestHandler (HMAC)
-//  5. Everything else → tenant resolve → static-serve → 404 if neither
+//  2. /api/v1/admin/* — handed to AdminAPI (+ media upload subroute)
+//  3. /api/v1/ingest/release — handed to IngestHandler (HMAC)
+//  4. Everything else → tenant resolve → static-serve → 404 if neither
 //
 // Every request increments the per-tenant request counter (V30) keyed
 // on the resolved tenant slug (or "_unresolved" for admin/system
@@ -204,11 +203,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if path == "/healthz" {
 		s.serveHealthz(rec, r)
-		return
-	}
-
-	if path == "/metrics" && s.metrics != nil {
-		s.metrics.ServeHTTP(rec, r)
 		return
 	}
 

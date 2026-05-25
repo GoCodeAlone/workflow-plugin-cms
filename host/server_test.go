@@ -20,6 +20,7 @@ import (
 	"github.com/GoCodeAlone/workflow-plugin-cms/bundle"
 	"github.com/GoCodeAlone/workflow-plugin-cms/media"
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
+	"github.com/GoCodeAlone/workflow/telemetry"
 )
 
 func TestServer_Healthz_OK(t *testing.T) {
@@ -847,20 +848,53 @@ func TestServer_EndToEnd_TenantCreate_PreviewAutoProvision(t *testing.T) {
 	}
 }
 
-func TestServer_DoesNotServeMetricsEndpoint(t *testing.T) {
+func TestServer_EmitMetricsParity(t *testing.T) {
 	s := New(Config{})
 	// Generate some traffic.
 	_ = doReq(t, s, "GET", "/healthz", "", nil)
 	_ = doReq(t, s, "GET", "/healthz", "", nil)
 	_ = doReq(t, s, "POST", "/api/v1/admin/tenants", "", strings.NewReader(`{"slug":"acme"}`))
 
+	recorder := telemetry.NewSnapshotRecorder()
+	if err := s.EmitMetrics(context.Background(), recorder); err != nil {
+		t.Fatal(err)
+	}
+	metrics := recorder.Metrics()
+	assertMetric(t, metrics, "multisite_requests_total", 3, nil)
+	assertMetric(t, metrics, "multisite_tenant_requests_total", 3, telemetry.Attrs{"tenant": "_unresolved"})
+}
+
+func TestServerMetricsEndpointRemoved(t *testing.T) {
+	s := New(Config{})
 	rec := doReq(t, s, "GET", "/metrics", "", nil)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("metrics endpoint status = %d, want 404", rec.Code)
+		t.Fatalf("/metrics status = %d, want 404", rec.Code)
 	}
-	if got := s.Metrics().Snapshot()["_global"]; got != 4 {
-		t.Fatalf("global counter = %d, want 4", got)
+}
+
+func assertMetric(t *testing.T, metrics []telemetry.MetricRecord, name string, value float64, attrs telemetry.Attrs) {
+	t.Helper()
+	for _, metric := range metrics {
+		if metric.Name != name || metric.Value != value {
+			continue
+		}
+		if attrsMatch(metric.Attrs, attrs) {
+			return
+		}
 	}
+	t.Fatalf("missing metric %s=%v attrs=%v in %#v", name, value, attrs, metrics)
+}
+
+func attrsMatch(got, want telemetry.Attrs) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for k, v := range want {
+		if got[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 func TestServer_Media_Disabled_503(t *testing.T) {

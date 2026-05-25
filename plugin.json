@@ -7,7 +7,7 @@
     "type": "external",
     "tier": "community",
     "private": false,
-    "minEngineVersion": "0.60.0",
+    "minEngineVersion": "0.64.3",
     "keywords": ["cms", "multi-tenant", "wysiwyg", "tiptap", "static-site", "domain-routing"],
     "homepage": "https://github.com/GoCodeAlone/workflow-plugin-cms",
     "repository": "https://github.com/GoCodeAlone/workflow-plugin-cms",

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GoCodeAlone/workflow-plugin-cms/audit"
 	"github.com/GoCodeAlone/workflow-plugin-cms/bundle"
 	"github.com/GoCodeAlone/workflow-plugin-cms/media"
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
@@ -113,11 +114,10 @@ func TestServer_TenantResolver_Vanity(t *testing.T) {
 	req.Host = "acme.example"
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
-	// Tenant resolves but no content path is mounted yet — expect 404
-	// with the placeholder body. The tenant-resolved path is exercised
-	// by the cache test below.
+	// Tenant resolves, but this fixture does not configure a bundle or
+	// CMS page for the root path.
 	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404 placeholder for resolved tenant; got %d", rec.Code)
+		t.Errorf("expected 404 for resolved tenant with no content; got %d", rec.Code)
 	}
 }
 
@@ -466,6 +466,79 @@ func TestServer_AdminCreatedTenantResolvesStaticBundle(t *testing.T) {
 	}
 }
 
+func TestServer_AdminMutationsRecordAuditEntries(t *testing.T) {
+	sink := audit.NewMemorySink()
+	s := New(Config{
+		AuditSignKey: "test-sign-key",
+		AuditSink:    sink,
+		AuditActor: func(r *http.Request) string {
+			return r.Header.Get("X-Actor")
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/tenants", strings.NewReader(`{"slug":"acme"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Actor", "alice")
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create tenant: got %d body=%q, want 201", rec.Code, rec.Body.String())
+	}
+	var tenant map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &tenant); err != nil {
+		t.Fatal(err)
+	}
+	tid := int64(tenant["ID"].(float64))
+
+	rec = doReq(t, s, http.MethodPost, "/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages", "application/json",
+		strings.NewReader(`{"path":"/welcome","title":"Welcome","body_html":"<h1>Welcome</h1>","status":"published"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create page: got %d body=%q, want 201", rec.Code, rec.Body.String())
+	}
+
+	entries, err := sink.List(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("audit entries = %d, want 2: %+v", len(entries), entries)
+	}
+	if entries[0].Actor != "alice" || entries[0].Action != "tenant.create" || entries[0].Subject != "tenant:"+strconv.FormatInt(tid, 10) {
+		t.Fatalf("tenant audit entry = %+v", entries[0])
+	}
+	if entries[1].Actor != "admin" || entries[1].TenantID != tid || entries[1].Action != "page.create" {
+		t.Fatalf("page audit entry = %+v", entries[1])
+	}
+	if broken, err := s.Audit().Verify(0); err != nil || broken != -1 {
+		t.Fatalf("audit verify = (%d, %v), want clean", broken, err)
+	}
+}
+
+func TestServer_AutoPreviewDomainRecordsAuditEntry(t *testing.T) {
+	sink := audit.NewMemorySink()
+	s := New(Config{
+		PreviewSubdomainBase: "preview.example",
+		AuditSignKey:         "test-sign-key",
+		AuditSink:            sink,
+	})
+
+	rec := doReq(t, s, http.MethodPost, "/api/v1/admin/tenants", "application/json", strings.NewReader(`{"slug":"acme"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create tenant: got %d body=%q, want 201", rec.Code, rec.Body.String())
+	}
+
+	entries, err := sink.List(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("audit entries = %d, want tenant.create + domain.create: %+v", len(entries), entries)
+	}
+	if entries[1].Action != "domain.create" || entries[1].Meta["auto_preview"] != true {
+		t.Fatalf("preview domain audit entry = %+v", entries[1])
+	}
+}
+
 func TestServer_TenantResolver_UnknownHost404(t *testing.T) {
 	s := New(Config{TenantResolverStore: &stubResolver{}})
 
@@ -494,8 +567,7 @@ func TestServer_TenantResolver_PreviewFallback(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
-		// Same as above — preview-resolved still hits the placeholder
-		// 404; this proves the slug path was matched.
+		// Same as above: preview resolved, but no content is configured.
 		t.Errorf("preview fallback: %d", rec.Code)
 	}
 }

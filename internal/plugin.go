@@ -6,17 +6,14 @@
 //   - cms.tenant_resolver         — Host → tenant_id middleware (V1, V2)
 //   - cms.static_serve_before_dynamic — static-wins routing (V3)
 //   - cms.engine                  — page CRUD + render + dynamic-section
-//                                   substitution + theme resolver
+//     substitution + theme resolver
 //   - analytics.injection         — per-tenant Google Analytics injection
-//                                   (delegated to workflow-plugin-analytics
-//                                   when present; V25)
+//     (delegated to workflow-plugin-analytics
+//     when present; V25)
 //
 // Step types provided:
 //   - step.cms_render_page        — render a CMS page for the resolved tenant
 //   - step.cms_bundle_activate    — atomic-swap a fetched bundle into place
-//
-// All of the above are stub-implemented in this initial commit. The full
-// implementations follow per SPEC.md §T tasks T3-T28.
 package internal
 
 import (
@@ -77,5 +74,17 @@ func (p *CMSPlugin) StepTypes() []string {
 	return []string{
 		"step.cms_render_page",
 		"step.cms_bundle_activate",
+	}
+}
+
+// CreateStep creates a pipeline step instance of the given type.
+func (p *CMSPlugin) CreateStep(typeName, name string, config map[string]any) (sdk.StepInstance, error) {
+	switch typeName {
+	case "step.cms_render_page":
+		return newRenderPageStep(name, config), nil
+	case "step.cms_bundle_activate":
+		return newBundleActivateStep(name, config), nil
+	default:
+		return nil, fmt.Errorf("unknown step type: %s", typeName)
 	}
 }

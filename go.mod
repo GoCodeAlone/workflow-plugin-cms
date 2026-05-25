@@ -3,7 +3,7 @@ module github.com/GoCodeAlone/workflow-plugin-cms
 go 1.26.0
 
 require (
-	github.com/GoCodeAlone/workflow v0.64.3
+	github.com/GoCodeAlone/workflow v0.64.4
 	github.com/jackc/pgx/v5 v5.9.1
 )
 

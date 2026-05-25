@@ -7,11 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0-alpha] - 2026-05-19
+## [0.1.0] - 2026-05-25
 
 ### Added
 
-- Initial scaffold of CMS plugin.
 - 4 module types declared: `cms.tenant_resolver`, `cms.static_serve_before_dynamic`, `cms.engine`, `analytics.injection`.
 - 2 step types declared: `step.cms_render_page`, `step.cms_bundle_activate`.
-- All module implementations are stubs; full implementations follow SPEC.md §T tasks T3–T28 in [gocodealone-multisite](https://github.com/GoCodeAlone/gocodealone-multisite).
+- Strict contract descriptors and proto-compatible contract source for all advertised module and step types.
+- Release metadata with platform download URLs and embedded runtime manifest.
+- Tenant resolution, static-before-dynamic serving, CMS page CRUD/rendering, bundle activation, analytics HTML injection helpers, and audit-chain recording for admin writes.

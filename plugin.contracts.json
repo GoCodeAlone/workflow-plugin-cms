@@ -1,0 +1,45 @@
+{
+  "version": "v1",
+  "contracts": [
+    {
+      "kind": "module",
+      "type": "cms.tenant_resolver",
+      "mode": "strict",
+      "config": "workflow.plugins.cms.v1.TenantResolverConfig"
+    },
+    {
+      "kind": "module",
+      "type": "cms.static_serve_before_dynamic",
+      "mode": "strict",
+      "config": "workflow.plugins.cms.v1.StaticServeBeforeDynamicConfig"
+    },
+    {
+      "kind": "module",
+      "type": "cms.engine",
+      "mode": "strict",
+      "config": "workflow.plugins.cms.v1.EngineConfig"
+    },
+    {
+      "kind": "module",
+      "type": "analytics.injection",
+      "mode": "strict",
+      "config": "workflow.plugins.cms.v1.AnalyticsInjectionConfig"
+    },
+    {
+      "kind": "step",
+      "type": "step.cms_render_page",
+      "mode": "strict",
+      "config": "workflow.plugins.cms.v1.CMSRenderPageStepConfig",
+      "input": "workflow.plugins.cms.v1.CMSRenderPageStepInput",
+      "output": "workflow.plugins.cms.v1.CMSRenderPageStepOutput"
+    },
+    {
+      "kind": "step",
+      "type": "step.cms_bundle_activate",
+      "mode": "strict",
+      "config": "workflow.plugins.cms.v1.CMSBundleActivateStepConfig",
+      "input": "workflow.plugins.cms.v1.CMSBundleActivateStepInput",
+      "output": "workflow.plugins.cms.v1.CMSBundleActivateStepOutput"
+    }
+  ]
+}

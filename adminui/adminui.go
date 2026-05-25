@@ -8,8 +8,8 @@
 //   - Page list + create + edit + delete per tenant
 //   - Reload tenants cache
 //
-// Auth + WebAuthn enrolment land in a follow-up once the auth library
-// (workflow-plugin-auth#23) exposes an embeddable handler.
+// The host is responsible for wrapping this handler with AdminAuth before
+// exposing it in production.
 package adminui
 
 import (

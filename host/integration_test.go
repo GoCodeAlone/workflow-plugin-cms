@@ -10,9 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GoCodeAlone/workflow-plugin-cms/audit"
 	"github.com/GoCodeAlone/workflow-plugin-cms/media"
-	"github.com/GoCodeAlone/workflow-plugin-cms/store"
 )
 
 // fakeResolver returns the configured tenants by host or slug.
@@ -71,9 +69,8 @@ func TestIntegration_FullMatrix(t *testing.T) {
 		req.Host = host
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
-		// Resolved → 404 placeholder (content render path not yet
-		// implemented in host). The metrics counter for the slug
-		// proves resolution worked.
+		// No bundle or CMS page exists for this tenant yet. The metrics
+		// counter for the slug proves resolution worked.
 		_ = want
 	}
 	snap := srv.Metrics().Snapshot()
@@ -160,21 +157,12 @@ func TestIntegration_FullMatrix(t *testing.T) {
 
 	// 9. Audit log records all writes; chain verifies.
 	if srv.Audit() != nil {
-		// The host doesn't currently push events into audit on its
-		// own — that wiring lands in a follow-up. We still verify
-		// that the audit Logger exists and can record a synthetic
-		// entry, and that Verify is clean.
-		_, err := srv.Audit().Record("integration", 1, "page.create",
-			"page:"+strconv.FormatInt(pid, 10), nil)
-		if err != nil {
-			t.Errorf("audit Record: %v", err)
-		}
 		idx, err := srv.Audit().Verify(0)
 		if err != nil {
 			t.Errorf("audit Verify err: %v", err)
 		}
 		if idx != -1 {
-			t.Errorf("audit chain broke at %d (synthetic)", idx)
+			t.Errorf("audit chain broke at %d", idx)
 		}
 	}
 
@@ -210,7 +198,3 @@ func requestHost(h http.Handler, method, target, host string, body interface {
 	h.ServeHTTP(rec, req)
 	return rec
 }
-
-// Ensure unused imports stay used.
-var _ = store.ErrNotFound
-var _ = audit.Entry{}

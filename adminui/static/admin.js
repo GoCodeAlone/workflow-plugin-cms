@@ -1,8 +1,5 @@
-// Multisite admin UI — vanilla JS, no build step.
-//
-// Pre-auth scaffold per gocodealone-multisite SPEC T15. Once
-// workflow-plugin-auth ships the embeddable handler (issue #23) this
-// page gets a passkey-enrolment flow + Bearer token persistence.
+// Multisite admin UI — vanilla JS, no build step. Production hosts wrap
+// this surface with their configured AdminAuth middleware.
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 

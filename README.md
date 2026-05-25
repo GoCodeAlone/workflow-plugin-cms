@@ -17,7 +17,7 @@ Multi-tenant CMS engine for the [workflow engine](https://github.com/GoCodeAlone
 
 ## Status
 
-`v0.1.0-alpha` — scaffold + stub module implementations. Full implementations track against [gocodealone-multisite SPEC.md](https://github.com/GoCodeAlone/gocodealone-multisite/blob/main/SPEC.md) §T tasks T3–T28.
+`v0.1.0` — first releasable CMS plugin build. Includes tenant resolution, static-before-dynamic serving, CMS page CRUD/rendering, bundle activation, analytics HTML injection helpers, audit-chain recording for admin writes, and strict plugin contracts.
 
 ## Install
 
@@ -25,7 +25,7 @@ Multi-tenant CMS engine for the [workflow engine](https://github.com/GoCodeAlone
 # wfctl.yaml
 plugins:
   - name: workflow-plugin-cms
-    version: v0.1.0-alpha
+    version: v0.1.0
     source: github.com/GoCodeAlone/workflow-plugin-cms
 ```
 

@@ -9,10 +9,22 @@
 package main
 
 import (
+	_ "embed"
+
 	"github.com/GoCodeAlone/workflow-plugin-cms/internal"
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
 )
 
+// pluginJSON is copied from the repository root by GoReleaser before builds
+// and is committed for local builds/tests.
+//
+//go:embed plugin.json
+var pluginJSON []byte
+
+var manifest = sdk.MustEmbedManifest(pluginJSON)
+
 func main() {
-	sdk.Serve(internal.NewPlugin(), sdk.WithBuildVersion(sdk.ResolveBuildVersion(internal.Version)))
+	sdk.Serve(internal.NewPlugin(),
+		sdk.WithManifestProvider(manifest),
+		sdk.WithBuildVersion(sdk.ResolveBuildVersion(internal.Version)))
 }

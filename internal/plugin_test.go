@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"testing"
 )
 
@@ -69,5 +70,45 @@ func TestStepTypes_Listed(t *testing.T) {
 		if !want[st] {
 			t.Errorf("unexpected step type: %s", st)
 		}
+	}
+}
+
+func TestCreateStep_RenderPageExecutes(t *testing.T) {
+	p := NewPlugin().(*CMSPlugin)
+	step, err := p.CreateStep("step.cms_render_page", "render", map[string]any{
+		"content_type": "text/html; charset=utf-8",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := step.Execute(context.Background(), nil, nil, map[string]any{
+		"tenant_id": int64(7),
+		"path":      "/about",
+		"title":     "About",
+		"body_html": "<main>About</main>",
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Output["html"] != "<main>About</main>" || got.Output["path"] != "/about" || got.Output["tenant_id"] != int64(7) {
+		t.Fatalf("render output = %+v", got.Output)
+	}
+}
+
+func TestCreateStep_BundleActivateExecutesValidation(t *testing.T) {
+	p := NewPlugin().(*CMSPlugin)
+	step, err := p.CreateStep("step.cms_bundle_activate", "activate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := step.Execute(context.Background(), nil, nil, nil, nil, nil); err == nil {
+		t.Fatal("expected missing bundle activation config to fail")
+	}
+}
+
+func TestCreateStep_UnknownType(t *testing.T) {
+	p := NewPlugin().(*CMSPlugin)
+	if _, err := p.CreateStep("step.unknown", "x", nil); err == nil {
+		t.Fatal("expected error for unknown step type")
 	}
 }

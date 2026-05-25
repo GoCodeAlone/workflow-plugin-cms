@@ -1,30 +1,37 @@
 name: Release
+
 on:
   push:
     tags:
       - 'v*'
+
 permissions:
   contents: write
+  id-token: write
+
 jobs:
   release:
+    name: Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: Install wfctl v0.63.2
-        run: |
-          mkdir -p "${RUNNER_TEMP}/wfctl-bin"
-          curl -sSfL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -o "${RUNNER_TEMP}/wfctl-bin/wfctl" \
-            "https://github.com/GoCodeAlone/workflow/releases/download/v0.63.2/wfctl-linux-amd64"
-          chmod +x "${RUNNER_TEMP}/wfctl-bin/wfctl"
+
+      - uses: GoCodeAlone/setup-wfctl@v1
+        with:
+          version: v0.64.4
+
       - name: Validate plugin contract for publish (pre-build)
-        run: "${{ runner.temp }}/wfctl-bin/wfctl plugin validate-contract --for-publish --tag ${{ github.ref_name }} ."
-      - uses: goreleaser/goreleaser-action@v7
+        run: wfctl plugin validate-contract --for-publish --tag "${{ github.ref_name }}" .
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: '~> v2'
@@ -43,22 +50,38 @@ jobs:
             jq '.[] | {name, type, goos, goarch, path}' dist/artifacts.json
             exit 0
           fi
-          "${{ runner.temp }}/wfctl-bin/wfctl" plugin verify-capabilities --binary "$BIN" .
+          wfctl plugin verify-capabilities --binary "$BIN" .
+
+      - name: Verify shipped plugin.json carries tag (post-build)
+        run: |
+          if [ -f .release/plugin.json ]; then
+            wfctl plugin validate-contract --for-publish --tag "${{ github.ref_name }}" --release-dir .release .
+          else
+            wfctl plugin validate-contract --for-publish --tag "${{ github.ref_name }}" --release-dir . .
+          fi
+
       - name: Publish GitHub release
         if: ${{ success() }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "${{ github.ref_name }}" --draft=false --repo "${{ github.repository }}"
-  notify-registry:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [release]
+
+  notify-workflow-registry:
+    name: Notify workflow-registry
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: release
+    if: >-
+      !github.event.deleted
+      && !contains(github.ref_name, '-')
+      && github.repository == 'GoCodeAlone/workflow-plugin-cms'
     steps:
-      - name: Notify workflow-registry of new release
-        uses: peter-evans/repository-dispatch@v3
+      - name: Trigger registry manifest sync
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4
         with:
-          token: ${{ secrets.REGISTRY_PAT }}
+          token: ${{ secrets.repo_dispatch_token }}
           repository: GoCodeAlone/workflow-registry
           event-type: plugin-release
-          client-payload: >-
-            {"plugin": "${{ github.repository }}", "tag": "${{ github.ref_name }}"}
+          client-payload: |-
+            {"plugin": "cms", "tag": "${{ github.ref_name }}"}

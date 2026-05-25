@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/GoCodeAlone/workflow-plugin-cms/audit"
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
 )
 
@@ -34,6 +35,8 @@ type AdminAPI struct {
 	pages       store.PageStore
 	ReloadFunc  func() error
 	PreviewBase string
+	Audit       *audit.Logger
+	AuditActor  func(*http.Request) string
 }
 
 // NewAdminAPI returns a handler using the given stores. Either store
@@ -128,12 +131,23 @@ func (a *AdminAPI) createTenant(w http.ResponseWriter, r *http.Request) {
 		statusFromTenantErr(w, err)
 		return
 	}
+	var previewDomain *store.Domain
 	// Auto-provision preview subdomain (T32 / V18).
 	if a.PreviewBase != "" {
 		previewHost := strings.ToLower(t.Slug) + "." + strings.ToLower(strings.TrimPrefix(a.PreviewBase, "."))
-		_ = a.tenants.CreateDomain(r.Context(), &store.Domain{
+		d := &store.Domain{
 			TenantID: t.ID, Host: previewHost, Kind: "preview",
-		})
+		}
+		if err := a.tenants.CreateDomain(r.Context(), d); err == nil {
+			previewDomain = d
+		}
+	}
+	actor := a.auditActor(r)
+	if !a.recordAudit(w, actor, t.ID, "tenant.create", "tenant:"+strconv.FormatInt(t.ID, 10), map[string]any{"slug": t.Slug}) {
+		return
+	}
+	if previewDomain != nil && !a.recordAudit(w, actor, t.ID, "domain.create", "domain:"+strconv.FormatInt(previewDomain.ID, 10), map[string]any{"host": previewDomain.Host, "kind": previewDomain.Kind, "auto_preview": true}) {
+		return
 	}
 	writeJSON(w, http.StatusCreated, t)
 }
@@ -186,6 +200,9 @@ func (a *AdminAPI) createDomain(w http.ResponseWriter, r *http.Request, tenantID
 		statusFromTenantErr(w, err)
 		return
 	}
+	if !a.recordAudit(w, a.auditActor(r), tenantID, "domain.create", "domain:"+strconv.FormatInt(d.ID, 10), map[string]any{"host": d.Host, "kind": d.Kind}) {
+		return
+	}
 	writeJSON(w, http.StatusCreated, d)
 }
 
@@ -196,6 +213,9 @@ func (a *AdminAPI) deleteDomain(w http.ResponseWriter, r *http.Request, tenantID
 	}
 	if err := a.tenants.DeleteDomain(r.Context(), tenantID, domainID); err != nil {
 		statusFromTenantErr(w, err)
+		return
+	}
+	if !a.recordAudit(w, a.auditActor(r), tenantID, "domain.delete", "domain:"+strconv.FormatInt(domainID, 10), nil) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -272,6 +292,9 @@ func (a *AdminAPI) createPage(w http.ResponseWriter, r *http.Request, tenantID i
 		statusFromPageErr(w, err)
 		return
 	}
+	if !a.recordAudit(w, a.auditActor(r), tenantID, "page.create", "page:"+strconv.FormatInt(p.ID, 10), map[string]any{"path": p.Path, "status": string(p.Status)}) {
+		return
+	}
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -337,6 +360,9 @@ func (a *AdminAPI) updatePage(w http.ResponseWriter, r *http.Request, tenantID, 
 		statusFromPageErr(w, err)
 		return
 	}
+	if !a.recordAudit(w, a.auditActor(r), tenantID, "page.update", "page:"+strconv.FormatInt(existing.ID, 10), map[string]any{"path": existing.Path, "status": string(existing.Status), "version": existing.Version}) {
+		return
+	}
 	writeJSON(w, http.StatusOK, existing)
 }
 
@@ -353,7 +379,30 @@ func (a *AdminAPI) deletePage(w http.ResponseWriter, r *http.Request, tenantID, 
 		statusFromPageErr(w, err)
 		return
 	}
+	if !a.recordAudit(w, a.auditActor(r), tenantID, "page.delete", "page:"+strconv.FormatInt(pageID, 10), nil) {
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *AdminAPI) auditActor(r *http.Request) string {
+	if a.AuditActor != nil {
+		if actor := strings.TrimSpace(a.AuditActor(r)); actor != "" {
+			return actor
+		}
+	}
+	return "admin"
+}
+
+func (a *AdminAPI) recordAudit(w http.ResponseWriter, actor string, tenantID int64, action, subject string, meta map[string]any) bool {
+	if a.Audit == nil {
+		return true
+	}
+	if _, err := a.Audit.Record(actor, tenantID, action, subject, meta); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "audit_failed", err.Error())
+		return false
+	}
+	return true
 }
 
 func statusFromPageErr(w http.ResponseWriter, err error) {

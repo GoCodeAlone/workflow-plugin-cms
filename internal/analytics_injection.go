@@ -9,8 +9,6 @@ import (
 // analyticsInjectionModule injects gtag.js into rendered pages when the
 // resolved tenant has `analytics.google.measurement_id` set in their
 // multisite.yaml (SPEC §V25).
-//
-// STUB — full implementation in T28 (this plugin) + T29 (workflow-plugin-analytics extension).
 type analyticsInjectionModule struct {
 	name string
 	mode string // "per_tenant" — accepts ID from tenant's multisite.yaml
@@ -24,8 +22,8 @@ func newAnalyticsInjectionModule(name string, config map[string]any) (sdk.Module
 	return m, nil
 }
 
-func (m *analyticsInjectionModule) Name() string  { return m.name }
+func (m *analyticsInjectionModule) Name() string { return m.name }
 
-func (m *analyticsInjectionModule) Init() error                  { return nil }
+func (m *analyticsInjectionModule) Init() error                     { return nil }
 func (m *analyticsInjectionModule) Start(ctx context.Context) error { return nil }
 func (m *analyticsInjectionModule) Stop(ctx context.Context) error  { return nil }

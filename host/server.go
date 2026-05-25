@@ -86,6 +86,14 @@ type Config struct {
 	// AuditSignKey signs audit-chain entries. Empty disables audit
 	// recording. Audit entries are emitted for tenant + page mutations.
 	AuditSignKey string
+
+	// AuditSink persists audit-chain entries. Nil uses an in-memory sink.
+	// Ignored when AuditSignKey is empty.
+	AuditSink audit.Sink
+
+	// AuditActor returns the actor recorded for admin audit entries.
+	// Empty return values fall back to "admin".
+	AuditActor func(*http.Request) string
 }
 
 // TenantResolverStore is the read-side tenant lookup interface — it is
@@ -150,7 +158,9 @@ func New(cfg Config) *Server {
 	}
 	s.metrics = monitoring.New()
 	if cfg.AuditSignKey != "" {
-		s.audit = audit.New(cfg.AuditSignKey, nil)
+		s.audit = audit.New(cfg.AuditSignKey, cfg.AuditSink)
+		s.admin.Audit = s.audit
+		s.admin.AuditActor = cfg.AuditActor
 	}
 	s.adminRoot = adminui.Handler()
 	s.adminUI = http.StripPrefix("/admin", s.adminRoot)

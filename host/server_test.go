@@ -587,7 +587,7 @@ func TestServer_EndToEnd_TenantCreate_PreviewAutoProvision(t *testing.T) {
 	}
 }
 
-func TestServer_Metrics(t *testing.T) {
+func TestServer_DoesNotServeMetricsEndpoint(t *testing.T) {
 	s := New(Config{})
 	// Generate some traffic.
 	_ = doReq(t, s, "GET", "/healthz", "", nil)
@@ -595,12 +595,11 @@ func TestServer_Metrics(t *testing.T) {
 	_ = doReq(t, s, "POST", "/api/v1/admin/tenants", "", strings.NewReader(`{"slug":"acme"}`))
 
 	rec := doReq(t, s, "GET", "/metrics", "", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("metrics: %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("metrics endpoint status = %d, want 404", rec.Code)
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "multisite_requests_total") {
-		t.Errorf("missing requests_total metric:\n%s", body)
+	if got := s.Metrics().Snapshot()["_global"]; got != 4 {
+		t.Fatalf("global counter = %d, want 4", got)
 	}
 }
 

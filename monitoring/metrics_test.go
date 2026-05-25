@@ -3,7 +3,6 @@ package monitoring
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -25,35 +24,6 @@ func TestCounters_Inc(t *testing.T) {
 	}
 }
 
-func TestCounters_MetricsExposition(t *testing.T) {
-	c := New()
-	c.Inc("acme", 200)
-	c.Inc("beta", 500)
-
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	rec := httptest.NewRecorder()
-	c.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("metrics: %d", rec.Code)
-	}
-	body := rec.Body.String()
-
-	required := []string{
-		"multisite_uptime_seconds",
-		"multisite_requests_total 2",
-		"multisite_request_errors_total 1",
-		`multisite_tenant_requests_total{tenant="acme"} 1`,
-		`multisite_tenant_requests_total{tenant="beta"} 1`,
-		`multisite_tenant_request_errors_total{tenant="beta"} 1`,
-	}
-	for _, want := range required {
-		if !strings.Contains(body, want) {
-			t.Errorf("missing %q in body:\n%s", want, body)
-		}
-	}
-}
-
 func TestCounters_UnresolvedTenant_NotAttributed(t *testing.T) {
 	c := New()
 	c.Inc("", 200)
@@ -63,20 +33,6 @@ func TestCounters_UnresolvedTenant_NotAttributed(t *testing.T) {
 	}
 	if len(snap) != 1 {
 		t.Errorf("snapshot should only contain _global; got %v", snap)
-	}
-}
-
-func TestEscapeLabel_StripsBreakoutChars(t *testing.T) {
-	cases := map[string]string{
-		`acme`:          `acme`,
-		`a"b`:           `ab`,
-		"a\nb":          "ab",
-		"a\\b":          "ab",
-	}
-	for in, want := range cases {
-		if got := escapeLabel(in); got != want {
-			t.Errorf("escape(%q) = %q want %q", in, got, want)
-		}
 	}
 }
 

@@ -178,13 +178,14 @@ func TestIntegration_FullMatrix(t *testing.T) {
 		}
 	}
 
-	// 10. /metrics — global counter includes every request above.
+	// 10. The host no longer exposes a bespoke /metrics endpoint; counters
+	// remain available internally for OTel/host adapters.
 	rec = request(srv, "GET", "/metrics", "", nil)
-	if rec.Code != 200 {
+	if rec.Code != http.StatusNotFound {
 		t.Errorf("T30 /metrics: %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "multisite_requests_total") {
-		t.Errorf("T30 missing metric")
+	if snap := srv.Metrics().Snapshot(); snap["_global"] == 0 {
+		t.Errorf("T30 metrics counter did not record requests")
 	}
 }
 

@@ -199,6 +199,40 @@ func TestServer_TenantStaticBundleInjectsAnalytics(t *testing.T) {
 	}
 }
 
+func TestServer_TenantStaticBundleDoesNotInjectAnalyticsIntoAssets(t *testing.T) {
+	root := t.TempDir()
+	versionDir := filepath.Join(root, "gocodealone", "v1.0.0", "assets")
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, "app.css"), []byte("body{color:#111}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "gocodealone", "v1.0.0"), filepath.Join(root, "gocodealone", "current")); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{
+		TenantResolverStore: r,
+		BundleRoot:          root,
+		AnalyticsConfigForTenant: func(int64) analytics.TenantConfig {
+			return analytics.TenantConfig{GoogleMeasurementID: "G-VM9JNJRJW1"}
+		},
+	})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/assets/app.css", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("asset status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "G-VM9JNJRJW1") || strings.Contains(rec.Body.String(), "googletagmanager.com") {
+		t.Fatalf("asset should not contain analytics snippet: %q", rec.Body.String())
+	}
+}
+
 func TestServer_TenantStaticBundleServesSPAFallback(t *testing.T) {
 	root := t.TempDir()
 	versionDir := filepath.Join(root, "gocodealone", "v1.0.0")

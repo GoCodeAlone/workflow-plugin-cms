@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GoCodeAlone/workflow-plugin-cms/analytics"
 	"github.com/GoCodeAlone/workflow-plugin-cms/audit"
 	"github.com/GoCodeAlone/workflow-plugin-cms/bundle"
 	"github.com/GoCodeAlone/workflow-plugin-cms/media"
@@ -161,6 +162,77 @@ func TestServer_TenantStaticBundleServesIndex(t *testing.T) {
 	}
 }
 
+func TestServer_TenantStaticBundleInjectsAnalytics(t *testing.T) {
+	root := t.TempDir()
+	versionDir := filepath.Join(root, "gocodealone", "v1.0.0")
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, "index.html"), []byte("<html><head></head><body>site</body></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(versionDir, filepath.Join(root, "gocodealone", "current")); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{
+		TenantResolverStore: r,
+		BundleRoot:          root,
+		AnalyticsConfigForTenant: func(tenantID int64) analytics.TenantConfig {
+			if tenantID != 1 {
+				return analytics.TenantConfig{}
+			}
+			return analytics.TenantConfig{GoogleMeasurementID: "G-VM9JNJRJW1"}
+		},
+	})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "G-VM9JNJRJW1") {
+		t.Fatalf("analytics measurement ID missing from static HTML: %q", rec.Body.String())
+	}
+}
+
+func TestServer_TenantStaticBundleDoesNotInjectAnalyticsIntoAssets(t *testing.T) {
+	root := t.TempDir()
+	versionDir := filepath.Join(root, "gocodealone", "v1.0.0", "assets")
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, "app.css"), []byte("body{color:#111}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "gocodealone", "v1.0.0"), filepath.Join(root, "gocodealone", "current")); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{
+		TenantResolverStore: r,
+		BundleRoot:          root,
+		AnalyticsConfigForTenant: func(int64) analytics.TenantConfig {
+			return analytics.TenantConfig{GoogleMeasurementID: "G-VM9JNJRJW1"}
+		},
+	})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/assets/app.css", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("asset status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "G-VM9JNJRJW1") || strings.Contains(rec.Body.String(), "googletagmanager.com") {
+		t.Fatalf("asset should not contain analytics snippet: %q", rec.Body.String())
+	}
+}
+
 func TestServer_TenantStaticBundleServesSPAFallback(t *testing.T) {
 	root := t.TempDir()
 	versionDir := filepath.Join(root, "gocodealone", "v1.0.0")
@@ -219,6 +291,42 @@ func TestServer_PublicCMSPageRendersAfterStaticMiss(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "about cms page") {
 		t.Fatalf("CMS page body = %q, want stored HTML", rec.Body.String())
+	}
+}
+
+func TestServer_PublicCMSPageInjectsAnalytics(t *testing.T) {
+	pages := store.NewMemoryPageStore()
+	if err := pages.Create(context.Background(), 1, &store.Page{
+		TenantID: 1,
+		Path:     "/about",
+		Title:    "About",
+		BodyHTML: "<html><head></head><body>about cms page</body></html>",
+		Status:   store.StatusPublished,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{
+		TenantResolverStore: r,
+		Pages:               pages,
+		AnalyticsConfigForTenant: func(tenantID int64) analytics.TenantConfig {
+			if tenantID != 1 {
+				return analytics.TenantConfig{}
+			}
+			return analytics.TenantConfig{GoogleMeasurementID: "G-VM9JNJRJW1", AnonymizeIP: true}
+		},
+	})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/about", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("CMS page status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "G-VM9JNJRJW1") || !strings.Contains(rec.Body.String(), "anonymize_ip") {
+		t.Fatalf("analytics snippet missing from CMS HTML: %q", rec.Body.String())
 	}
 }
 

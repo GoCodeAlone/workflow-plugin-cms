@@ -9,6 +9,7 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -282,13 +283,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantSlug = tenant.TenantSlug
-	if s.serveStaticExactBundle(rec, r, tenant.TenantSlug) {
+	if s.serveStaticExactBundle(rec, r, tenant) {
 		return
 	}
 	if s.serveCMSPage(rec, r, tenant) {
 		return
 	}
-	if s.serveSPAFallbackBundle(rec, r, tenant.TenantSlug) {
+	if s.serveSPAFallbackBundle(rec, r, tenant) {
 		return
 	}
 	http.Error(rec, "tenant resolved but no content path mounted yet", http.StatusNotFound)
@@ -319,26 +320,29 @@ func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request, adminHos
 	return true
 }
 
-func (s *Server) serveStaticExactBundle(w http.ResponseWriter, r *http.Request, slug string) bool {
-	filePath, ok := resolveBundlePath(s.cfg.BundleRoot, slug, r.URL.Path)
+func (s *Server) serveStaticExactBundle(w http.ResponseWriter, r *http.Request, tenant TenantInfo) bool {
+	filePath, ok := resolveBundlePath(s.cfg.BundleRoot, tenant.TenantSlug, r.URL.Path)
 	if !ok {
 		return false
 	}
-	f, err := os.Open(filePath)
-	if err != nil {
-		return false
-	}
-	return serveOpenedFile(w, r, filePath, f)
+	return s.serveBundleFile(w, r, filePath, tenant)
 }
 
-func (s *Server) serveSPAFallbackBundle(w http.ResponseWriter, r *http.Request, slug string) bool {
-	filePath, ok := resolveSPAFallbackPath(s.cfg.BundleRoot, slug, r)
+func (s *Server) serveSPAFallbackBundle(w http.ResponseWriter, r *http.Request, tenant TenantInfo) bool {
+	filePath, ok := resolveSPAFallbackPath(s.cfg.BundleRoot, tenant.TenantSlug, r)
 	if !ok {
 		return false
 	}
+	return s.serveBundleFile(w, r, filePath, tenant)
+}
+
+func (s *Server) serveBundleFile(w http.ResponseWriter, r *http.Request, filePath string, tenant TenantInfo) bool {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return false
+	}
+	if shouldInjectAnalyticsForFile(filePath) {
+		return s.serveOpenedHTMLFile(w, r, filePath, f, tenant)
 	}
 	return serveOpenedFile(w, r, filePath, f)
 }
@@ -351,6 +355,33 @@ func serveOpenedFile(w http.ResponseWriter, r *http.Request, filePath string, f 
 	}
 	http.ServeContent(w, r, filepath.Base(filePath), info.ModTime(), f)
 	return true
+}
+
+func (s *Server) serveOpenedHTMLFile(w http.ResponseWriter, r *http.Request, filePath string, f *os.File, tenant TenantInfo) bool {
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		return false
+	}
+	body, err := os.ReadFile(filePath)
+	if err != nil {
+		return false
+	}
+	body = analytics.InjectGtag(body, s.analyticsConfigForTenant(tenant.TenantID))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeContent(w, r, filepath.Base(filePath), info.ModTime(), bytes.NewReader(body))
+	return true
+}
+
+func (s *Server) analyticsConfigForTenant(tenantID int64) analytics.TenantConfig {
+	if s.cfg.AnalyticsConfigForTenant == nil {
+		return analytics.TenantConfig{}
+	}
+	return s.cfg.AnalyticsConfigForTenant(tenantID)
+}
+
+func shouldInjectAnalyticsForFile(filePath string) bool {
+	return strings.EqualFold(filepath.Ext(filePath), ".html")
 }
 
 func (s *Server) serveCMSPage(w http.ResponseWriter, r *http.Request, tenant TenantInfo) bool {
@@ -375,7 +406,8 @@ func (s *Server) serveCMSPage(w http.ResponseWriter, r *http.Request, tenant Ten
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if r.Method != http.MethodHead {
-			_, _ = w.Write([]byte(p.BodyHTML))
+			body := analytics.InjectGtag([]byte(p.BodyHTML), s.analyticsConfigForTenant(tenant.TenantID))
+			_, _ = w.Write(body)
 		}
 		return true
 	}

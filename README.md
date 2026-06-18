@@ -19,6 +19,17 @@ Multi-tenant CMS engine for the [workflow engine](https://github.com/GoCodeAlone
 
 `v0.1.0` — first releasable CMS plugin build. Includes tenant resolution, static-before-dynamic serving, CMS page CRUD/rendering, bundle activation, analytics HTML injection helpers, audit-chain recording for admin writes, and strict plugin contracts.
 
+## Static Page Overlays
+
+CMS overlays can clone a static bundle page by recording the source path, source
+hash, CSS selectors, and draft block document. Publishing requires the current
+source hash to match the clone hash unless the caller has an explicit force
+permission. A mismatch moves the overlay to `conflict_review` so updated static
+content is reviewed before CMS changes override it.
+
+Disabling an overlay never deletes or mutates the source static bundle; it only
+marks the overlay inactive for render hooks.
+
 ## Install
 
 ```yaml

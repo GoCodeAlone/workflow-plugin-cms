@@ -80,6 +80,13 @@ func (a *AdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		tid, pid := extractTenantAndPageID(path)
 		a.deletePage(w, r, tid, pid)
 
+	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/overlays/clone") && r.Method == http.MethodPost:
+		a.cloneOverlay(w, r, extractTenantID(path))
+	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/overlays/publish") && r.Method == http.MethodPut:
+		a.publishOverlay(w, r, extractTenantID(path))
+	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/overlays/disable") && r.Method == http.MethodPut:
+		a.disableOverlay(w, r, extractTenantID(path))
+
 	default:
 		writeJSONError(w, http.StatusNotFound, "not_found", "route not found")
 	}
@@ -383,6 +390,86 @@ func (a *AdminAPI) deletePage(w http.ResponseWriter, r *http.Request, tenantID, 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Overlay handlers ---------------------------------------------------
+
+type overlayPublishBody struct {
+	Overlay           StaticPageOverlay `json:"overlay"`
+	CurrentSourceHash string            `json:"current_source_hash"`
+	Force             bool              `json:"force"`
+}
+
+type overlayDisableBody struct {
+	Overlay StaticPageOverlay `json:"overlay"`
+}
+
+func (a *AdminAPI) cloneOverlay(w http.ResponseWriter, r *http.Request, tenantID int64) {
+	if tenantID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid tenant id")
+		return
+	}
+	var body StaticPageOverlayInput
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	body.TenantID = tenantID
+	overlay, err := NewStaticPageOverlay(body)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if !a.recordAudit(w, a.auditActor(r), tenantID, "overlay.clone", "overlay:"+overlay.SourcePath, map[string]any{"source_path": overlay.SourcePath, "source_hash": overlay.SourceHash}) {
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"overlay": overlay})
+}
+
+func (a *AdminAPI) publishOverlay(w http.ResponseWriter, r *http.Request, tenantID int64) {
+	if tenantID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid tenant id")
+		return
+	}
+	var body overlayPublishBody
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if body.Overlay.TenantID != tenantID {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "overlay tenant mismatch")
+		return
+	}
+	result, err := PublishOverlay(&body.Overlay, body.CurrentSourceHash, body.Force)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if !a.recordAudit(w, a.auditActor(r), tenantID, "overlay.publish", "overlay:"+body.Overlay.SourcePath, map[string]any{"published": result.Published, "status": string(body.Overlay.Status), "forced": body.Force}) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"overlay": body.Overlay, "result": result})
+}
+
+func (a *AdminAPI) disableOverlay(w http.ResponseWriter, r *http.Request, tenantID int64) {
+	if tenantID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid tenant id")
+		return
+	}
+	var body overlayDisableBody
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if body.Overlay.TenantID != tenantID {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "overlay tenant mismatch")
+		return
+	}
+	DisableOverlay(&body.Overlay)
+	if !a.recordAudit(w, a.auditActor(r), tenantID, "overlay.disable", "overlay:"+body.Overlay.SourcePath, map[string]any{"source_path": body.Overlay.SourcePath}) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"overlay": body.Overlay})
 }
 
 func (a *AdminAPI) auditActor(r *http.Request) string {

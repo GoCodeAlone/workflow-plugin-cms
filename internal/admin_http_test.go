@@ -219,6 +219,48 @@ func TestAdmin_PreviewSubdomainAutoProvision(t *testing.T) {
 	}
 }
 
+func TestAdmin_OverlayCloneAndPublishConflict(t *testing.T) {
+	api := newAdminTestAPI()
+	_, gotT := doJSON(t, api, http.MethodPost, "/api/v1/admin/tenants", map[string]string{"slug": "a"})
+	tid := int64(gotT["ID"].(float64))
+
+	rec, got := doJSON(t, api, http.MethodPost,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/overlays/clone",
+		map[string]any{
+			"source_path":  "/about.html",
+			"source_hash":  "sha256:abc123",
+			"draft_blocks": map[string]any{"type": "doc"},
+			"selectors": []map[string]string{
+				{"selector": "#hero", "mode": "replace"},
+			},
+		})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("clone overlay: %d %v", rec.Code, got)
+	}
+	overlay := got["overlay"].(map[string]any)
+	if overlay["SourcePath"] != "/about.html" || overlay["Status"] != "draft" {
+		t.Fatalf("overlay clone = %#v, want source draft overlay", overlay)
+	}
+
+	rec, got = doJSON(t, api, http.MethodPut,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/overlays/publish",
+		map[string]any{
+			"overlay":             overlay,
+			"current_source_hash": "sha256:new",
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("publish overlay: %d %v", rec.Code, got)
+	}
+	result := got["result"].(map[string]any)
+	if result["Published"].(bool) {
+		t.Fatalf("publish result = %#v, want conflict", result)
+	}
+	overlay = got["overlay"].(map[string]any)
+	if overlay["Status"] != "conflict_review" {
+		t.Fatalf("overlay status = %#v, want conflict_review", overlay)
+	}
+}
+
 func TestAdmin_PageCRUD(t *testing.T) {
 	api := newAdminTestAPI()
 	_, gotT := doJSON(t, api, http.MethodPost, "/api/v1/admin/tenants", map[string]string{"slug": "a"})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
 )
@@ -75,21 +76,61 @@ func (m *engineModule) InvokeMethod(method string, args map[string]any) (map[str
 		}
 		DisableOverlay(overlay)
 		return map[string]any{"overlay": overlay}, nil
+	case "NavigationPublished":
+		var body navigationBody
+		if err := decodeMethodArgs(args, &body); err != nil {
+			return nil, err
+		}
+		now := time.Now().UTC()
+		if body.Now != nil {
+			now = body.Now.UTC()
+		}
+		items, err := PublishedNavigation(body.Items, now)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"items": items}, nil
+	case "WidgetRender":
+		var body widgetRenderBody
+		if err := decodeMethodArgs(args, &body); err != nil {
+			return nil, err
+		}
+		html, err := RenderWidgetInstance(body.Instance, WidgetRegistry{Types: body.Types})
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"html": html}, nil
+	case "MediaValidate":
+		var body mediaValidateBody
+		if err := decodeMethodArgs(args, &body); err != nil {
+			return nil, err
+		}
+		if err := ValidatePublishedMediaReference(body.Reference, MediaPolicy{AllowedObjectPrefixes: body.AllowedObjectPrefixes}); err != nil {
+			return nil, err
+		}
+		return map[string]any{"valid": true}, nil
 	default:
 		return nil, fmt.Errorf("cms.engine method %q is not supported", method)
 	}
 }
 
 func overlayInputFromMap(values map[string]any) (StaticPageOverlayInput, error) {
-	raw, err := json.Marshal(values)
-	if err != nil {
-		return StaticPageOverlayInput{}, fmt.Errorf("overlay input encode: %w", err)
-	}
 	var input StaticPageOverlayInput
-	if err := json.Unmarshal(raw, &input); err != nil {
+	if err := decodeMethodArgs(values, &input); err != nil {
 		return StaticPageOverlayInput{}, fmt.Errorf("overlay input decode: %w", err)
 	}
 	return input, nil
+}
+
+func decodeMethodArgs(values map[string]any, dst any) error {
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return fmt.Errorf("method args encode: %w", err)
+	}
+	if err := json.Unmarshal(raw, dst); err != nil {
+		return fmt.Errorf("method args decode: %w", err)
+	}
+	return nil
 }
 
 func overlayFromAny(value any) (*StaticPageOverlay, error) {

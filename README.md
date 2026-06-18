@@ -30,6 +30,20 @@ content is reviewed before CMS changes override it.
 Disabling an overlay never deletes or mutates the source static bundle; it only
 marks the overlay inactive for render hooks.
 
+## Navigation, Widgets, And Media
+
+Navigation items can target static routes, CMS pages, overlays, or external
+HTTP(S) URLs. Published navigation excludes draft, archived, and future
+scheduled items.
+
+Widget instances render only from an explicit allowlist. Raw script tags,
+inline event handlers, and `javascript:` URLs are rejected so widget behavior
+stays bounded by reviewed widget types.
+
+Published migrated content must reference relative media paths or object-store
+URLs owned by the site. Wix/parastorage/source-host media URLs are rejected
+until mirrored into site-owned storage.
+
 ## Install
 
 ```yaml

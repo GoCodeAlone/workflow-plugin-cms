@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/audit"
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
@@ -86,6 +87,13 @@ func (a *AdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.publishOverlay(w, r, extractTenantID(path))
 	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/overlays/disable") && r.Method == http.MethodPut:
 		a.disableOverlay(w, r, extractTenantID(path))
+
+	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/nav/published") && r.Method == http.MethodPost:
+		a.publishedNavigation(w, r, extractTenantID(path))
+	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/widgets/render") && r.Method == http.MethodPost:
+		a.renderWidget(w, r, extractTenantID(path))
+	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/media/validate") && r.Method == http.MethodPost:
+		a.validateMedia(w, r, extractTenantID(path))
 
 	default:
 		writeJSONError(w, http.StatusNotFound, "not_found", "route not found")
@@ -470,6 +478,81 @@ func (a *AdminAPI) disableOverlay(w http.ResponseWriter, r *http.Request, tenant
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"overlay": body.Overlay})
+}
+
+// --- Navigation/widget/media policy handlers ----------------------------
+
+type navigationBody struct {
+	Items []NavigationItem `json:"items"`
+	Now   *time.Time       `json:"now"`
+}
+
+type widgetRenderBody struct {
+	Instance WidgetInstance        `json:"instance"`
+	Types    map[string]WidgetType `json:"types"`
+}
+
+type mediaValidateBody struct {
+	Reference             string   `json:"reference"`
+	AllowedObjectPrefixes []string `json:"allowed_object_prefixes"`
+}
+
+func (a *AdminAPI) publishedNavigation(w http.ResponseWriter, r *http.Request, tenantID int64) {
+	if tenantID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid tenant id")
+		return
+	}
+	var body navigationBody
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	now := time.Now().UTC()
+	if body.Now != nil {
+		now = body.Now.UTC()
+	}
+	items, err := PublishedNavigation(body.Items, now)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *AdminAPI) renderWidget(w http.ResponseWriter, r *http.Request, tenantID int64) {
+	if tenantID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid tenant id")
+		return
+	}
+	var body widgetRenderBody
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	html, err := RenderWidgetInstance(body.Instance, WidgetRegistry{Types: body.Types})
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"html": html})
+}
+
+func (a *AdminAPI) validateMedia(w http.ResponseWriter, r *http.Request, tenantID int64) {
+	if tenantID == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid tenant id")
+		return
+	}
+	var body mediaValidateBody
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	err := ValidatePublishedMediaReference(body.Reference, MediaPolicy{AllowedObjectPrefixes: body.AllowedObjectPrefixes})
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"valid": true})
 }
 
 func (a *AdminAPI) auditActor(r *http.Request) string {

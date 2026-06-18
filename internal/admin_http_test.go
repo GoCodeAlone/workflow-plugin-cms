@@ -261,6 +261,50 @@ func TestAdmin_OverlayCloneAndPublishConflict(t *testing.T) {
 	}
 }
 
+func TestAdmin_NavigationWidgetAndMediaPolicyEndpoints(t *testing.T) {
+	api := newAdminTestAPI()
+	_, gotT := doJSON(t, api, http.MethodPost, "/api/v1/admin/tenants", map[string]string{"slug": "a"})
+	tid := int64(gotT["ID"].(float64))
+
+	rec, got := doJSON(t, api, http.MethodPost,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/nav/published",
+		map[string]any{"items": []map[string]string{
+			{"label": "Home", "kind": "static", "target": "/", "status": "published"},
+			{"label": "Draft", "kind": "cms_page", "target": "/draft", "status": "draft"},
+		}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("nav published: %d %v", rec.Code, got)
+	}
+	items := got["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("published nav items = %#v, want 1", items)
+	}
+
+	rec, got = doJSON(t, api, http.MethodPost,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/widgets/render",
+		map[string]any{
+			"instance": map[string]string{"id": "w1", "type": "tour-list"},
+			"types": map[string]map[string]string{
+				"tour-list": {"type": "tour-list", "markup": `<section data-widget="tour-list"></section>`},
+			},
+		})
+	if rec.Code != http.StatusOK || got["html"] == "" {
+		t.Fatalf("widget render: %d %v", rec.Code, got)
+	}
+
+	rec, got = doJSON(t, api, http.MethodPost,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/media/validate",
+		map[string]any{
+			"reference": "/assets/logo.png",
+			"allowed_object_prefixes": []string{
+				"https://cdn.gocodealone.com/sites/a/",
+			},
+		})
+	if rec.Code != http.StatusOK || got["valid"] != true {
+		t.Fatalf("media validate: %d %v", rec.Code, got)
+	}
+}
+
 func TestAdmin_PageCRUD(t *testing.T) {
 	api := newAdminTestAPI()
 	_, gotT := doJSON(t, api, http.MethodPost, "/api/v1/admin/tenants", map[string]string{"slug": "a"})

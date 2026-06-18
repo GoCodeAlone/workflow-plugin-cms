@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/audit"
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
@@ -244,21 +245,27 @@ func (a *AdminAPI) listPages(w http.ResponseWriter, r *http.Request, tenantID in
 // --- Page write handlers ------------------------------------------------
 
 type pageBody struct {
-	Subsite    string          `json:"subsite"`
-	Path       string          `json:"path"`
-	Title      string          `json:"title"`
-	BodyHTML   string          `json:"body_html"`
-	BodyBlocks json.RawMessage `json:"body_blocks"`
-	Status     string          `json:"status"`
+	Subsite     string          `json:"subsite"`
+	Path        string          `json:"path"`
+	Title       string          `json:"title"`
+	BodyHTML    string          `json:"body_html"`
+	BodyBlocks  json.RawMessage `json:"body_blocks"`
+	Status      string          `json:"status"`
+	TemplateID  string          `json:"template_id"`
+	PublishAt   *time.Time      `json:"publish_at"`
+	UnpublishAt *time.Time      `json:"unpublish_at"`
 }
 
 type pageUpdateBody struct {
-	Subsite    *string         `json:"subsite"`
-	Path       *string         `json:"path"`
-	Title      *string         `json:"title"`
-	BodyHTML   *string         `json:"body_html"`
-	BodyBlocks json.RawMessage `json:"body_blocks"`
-	Status     *string         `json:"status"`
+	Subsite     *string         `json:"subsite"`
+	Path        *string         `json:"path"`
+	Title       *string         `json:"title"`
+	BodyHTML    *string         `json:"body_html"`
+	BodyBlocks  json.RawMessage `json:"body_blocks"`
+	Status      *string         `json:"status"`
+	TemplateID  *string         `json:"template_id"`
+	PublishAt   *time.Time      `json:"publish_at"`
+	UnpublishAt *time.Time      `json:"unpublish_at"`
 }
 
 func (a *AdminAPI) createPage(w http.ResponseWriter, r *http.Request, tenantID int64) {
@@ -276,13 +283,16 @@ func (a *AdminAPI) createPage(w http.ResponseWriter, r *http.Request, tenantID i
 		return
 	}
 	p := &store.Page{
-		TenantID:   tenantID,
-		Subsite:    body.Subsite,
-		Path:       body.Path,
-		Title:      body.Title,
-		BodyHTML:   body.BodyHTML,
-		BodyBlocks: body.BodyBlocks,
-		Status:     store.PageStatus(body.Status),
+		TenantID:    tenantID,
+		Subsite:     body.Subsite,
+		Path:        body.Path,
+		Title:       body.Title,
+		BodyHTML:    body.BodyHTML,
+		BodyBlocks:  body.BodyBlocks,
+		Status:      store.PageStatus(body.Status),
+		TemplateID:  body.TemplateID,
+		PublishAt:   body.PublishAt,
+		UnpublishAt: body.UnpublishAt,
 	}
 	if err := p.Validate(); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -351,6 +361,15 @@ func (a *AdminAPI) updatePage(w http.ResponseWriter, r *http.Request, tenantID, 
 	}
 	if body.Status != nil {
 		existing.Status = store.PageStatus(*body.Status)
+	}
+	if body.TemplateID != nil {
+		existing.TemplateID = *body.TemplateID
+	}
+	if body.PublishAt != nil {
+		existing.PublishAt = body.PublishAt
+	}
+	if body.UnpublishAt != nil {
+		existing.UnpublishAt = body.UnpublishAt
 	}
 	if err := existing.Validate(); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())

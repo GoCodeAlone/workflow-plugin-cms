@@ -179,3 +179,16 @@ func TestCommandEmbedsCanonicalPluginManifest(t *testing.T) {
 		}
 	}
 }
+
+func TestReadmeDocumentsPageTemplateBackupFields(t *testing.T) {
+	data, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(data)
+	for _, want := range []string{"body_blocks", "template_id", "publish_at", "unpublish_at", "backup", "restore"} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("README.md missing persistence guidance for %q", want)
+		}
+	}
+}

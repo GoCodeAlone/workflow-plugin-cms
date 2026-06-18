@@ -2,9 +2,10 @@
 // implementation for the CMS engine.
 //
 // Per gocodealone-multisite SPEC.md:
-//   V12: per-tenant data writes ! include tenant_id WHERE clause.
-//   V15: CMS-rendered page → tenant_id from session; ⊥ from URL/header.
-//   V22: page filtered by (tenant_id, subsite_label).
+//
+//	V12: per-tenant data writes ! include tenant_id WHERE clause.
+//	V15: CMS-rendered page → tenant_id from session; ⊥ from URL/header.
+//	V22: page filtered by (tenant_id, subsite_label).
 //
 // Production wiring: postgres-backed implementation lives in
 // gocodealone-multisite (per the host's schema in migrations/0001).
@@ -28,6 +29,8 @@ type PageStatus string
 const (
 	StatusDraft     PageStatus = "draft"
 	StatusPublished PageStatus = "published"
+	StatusScheduled PageStatus = "scheduled"
+	StatusArchived  PageStatus = "archived"
 )
 
 // Page is a CMS-managed dynamic page for a tenant.
@@ -36,22 +39,28 @@ const (
 //   - TenantID:  ! non-zero (V12 multi-tenancy guard)
 //   - Subsite:   "" → applies to all subsites; "<label>" → subsite-scoped
 //   - Path:      URL path (e.g. "/blog/welcome"); ! unique per (tenant, subsite)
-//   - BodyHTML:  rendered HTML for serve-time output (Render result)
-//   - BodyBlocks: provider-specific block JSON (source of truth)
-//   - Status:    draft | published
+//   - BodyHTML:   legacy/rendered HTML fallback for serve-time output
+//   - BodyBlocks: provider-specific block JSON (source of truth when present)
+//   - TemplateID: optional template shell identifier
+//   - PublishAt:  optional first public-render timestamp
+//   - UnpublishAt: optional timestamp after which public rendering stops
+//   - Status:     draft | published | scheduled | archived
 //   - Version:   monotonic per-page edit counter
 type Page struct {
-	ID         int64
-	TenantID   int64
-	Subsite    string
-	Path       string
-	Title      string
-	BodyHTML   string
-	BodyBlocks json.RawMessage
-	Status     PageStatus
-	Version    int
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID          int64
+	TenantID    int64
+	Subsite     string
+	Path        string
+	Title       string
+	BodyHTML    string
+	BodyBlocks  json.RawMessage
+	Status      PageStatus
+	TemplateID  string
+	PublishAt   *time.Time
+	UnpublishAt *time.Time
+	Version     int
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Validate returns nil iff the page satisfies persistence invariants.
@@ -68,7 +77,7 @@ func (p *Page) Validate() error {
 	if p.Status == "" {
 		p.Status = StatusDraft
 	}
-	if p.Status != StatusDraft && p.Status != StatusPublished {
+	if p.Status != StatusDraft && p.Status != StatusPublished && p.Status != StatusScheduled && p.Status != StatusArchived {
 		return fmt.Errorf("page: invalid status %q", p.Status)
 	}
 	return nil
@@ -100,9 +109,9 @@ type PageStore interface {
 // Production uses a postgres-backed implementation that wires the same
 // interface.
 type MemoryPageStore struct {
-	mu    sync.RWMutex
+	mu     sync.RWMutex
 	nextID int64
-	pages map[int64]*Page // by ID
+	pages  map[int64]*Page // by ID
 }
 
 // NewMemoryPageStore returns an empty in-memory store.

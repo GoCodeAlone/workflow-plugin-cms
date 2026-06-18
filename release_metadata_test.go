@@ -32,12 +32,14 @@ type releaseContractsFile struct {
 }
 
 type releaseContract struct {
-	Kind   string `json:"kind"`
-	Type   string `json:"type"`
-	Mode   string `json:"mode"`
-	Config string `json:"config,omitempty"`
-	Input  string `json:"input,omitempty"`
-	Output string `json:"output,omitempty"`
+	Kind        string `json:"kind"`
+	Type        string `json:"type"`
+	ServiceName string `json:"serviceName,omitempty"`
+	Method      string `json:"method,omitempty"`
+	Mode        string `json:"mode"`
+	Config      string `json:"config,omitempty"`
+	Input       string `json:"input,omitempty"`
+	Output      string `json:"output,omitempty"`
 }
 
 func TestReleaseMetadataIsPublishable(t *testing.T) {
@@ -86,7 +88,11 @@ func TestReleaseMetadataIsPublishable(t *testing.T) {
 
 	byKindType := map[string]releaseContract{}
 	for _, contract := range contracts.Contracts {
-		byKindType[contract.Kind+"\x00"+contract.Type] = contract
+		key := contract.Kind + "\x00" + contract.Type
+		if contract.Kind == "service_method" {
+			key += "\x00" + contract.Method
+		}
+		byKindType[key] = contract
 	}
 	for _, typ := range manifest.Capabilities.ModuleTypes {
 		contract := byKindType["module\x00"+typ]
@@ -99,6 +105,14 @@ func TestReleaseMetadataIsPublishable(t *testing.T) {
 		if contract.Mode != "strict" || contract.Input == "" || contract.Output == "" {
 			t.Fatalf("step %q contract = %+v, want strict input/output descriptors", typ, contract)
 		}
+	}
+
+	adminContribution := byKindType["service_method\x00cms.engine\x00AdminContribution"]
+	if adminContribution.ServiceName != "CMSEngine" ||
+		adminContribution.Mode != "strict" ||
+		adminContribution.Input != "workflow.plugins.cms.v1.CMSAdminContributionInput" ||
+		adminContribution.Output != "workflow.plugins.cms.v1.CMSAdminContributionOutput" {
+		t.Fatalf("AdminContribution service contract = %+v, want strict CMSEngine descriptors", adminContribution)
 	}
 }
 

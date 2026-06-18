@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"fmt"
 
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
 )
@@ -43,3 +44,29 @@ func (m *engineModule) Name() string { return m.name }
 func (m *engineModule) Init() error                     { return nil }
 func (m *engineModule) Start(ctx context.Context) error { return nil }
 func (m *engineModule) Stop(ctx context.Context) error  { return nil }
+
+func (m *engineModule) InvokeMethod(method string, args map[string]any) (map[string]any, error) {
+	switch method {
+	case "AdminContribution":
+		authorized, _ := args["authorized"].(bool)
+		contribution := CMSAdminContribution()
+		contribution.Metadata = CMSAdminContributionMetadata(authorized)
+		return map[string]any{"contribution": adminContributionMap(contribution)}, nil
+	default:
+		return nil, fmt.Errorf("cms.engine method %q is not supported", method)
+	}
+}
+
+func adminContributionMap(contribution AdminContribution) map[string]any {
+	return map[string]any{
+		"id":          contribution.ID,
+		"title":       contribution.Title,
+		"category":    contribution.Category,
+		"path":        contribution.Path,
+		"render_mode": contribution.RenderMode,
+		"app_context": contribution.AppContext,
+		"permissions": contribution.Permissions,
+		"metadata":    contribution.Metadata,
+		"actions":     contribution.Actions,
+	}
+}

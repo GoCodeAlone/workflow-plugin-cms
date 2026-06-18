@@ -20,6 +20,15 @@
       "config": "workflow.plugins.cms.v1.EngineConfig"
     },
     {
+      "kind": "service_method",
+      "type": "cms.engine",
+      "serviceName": "CMSEngine",
+      "method": "AdminContribution",
+      "mode": "strict",
+      "input": "workflow.plugins.cms.v1.CMSAdminContributionInput",
+      "output": "workflow.plugins.cms.v1.CMSAdminContributionOutput"
+    },
+    {
       "kind": "module",
       "type": "analytics.injection",
       "mode": "strict",

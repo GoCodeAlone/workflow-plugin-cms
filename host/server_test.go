@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/analytics"
 	"github.com/GoCodeAlone/workflow-plugin-cms/audit"
@@ -330,6 +331,45 @@ func TestServer_PublicCMSPageInjectsAnalytics(t *testing.T) {
 	}
 }
 
+func TestServer_PublicCMSPageUsesBodyBlocksAndTemplate(t *testing.T) {
+	pages := store.NewMemoryPageStore()
+	if err := pages.Create(context.Background(), 1, &store.Page{
+		TenantID:   1,
+		Path:       "/about",
+		Title:      "About",
+		BodyHTML:   "<p>stale html</p>",
+		BodyBlocks: json.RawMessage(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"fresh blocks"}]}]}`),
+		Status:     store.StatusPublished,
+		TemplateID: "default",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{
+		TenantResolverStore: r,
+		Pages:               pages,
+		PageTemplates: map[string]string{
+			"default": "<html><body><header>site shell</header><!--cms:body--></body></html>",
+		},
+	})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/about", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("CMS page status: got %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "site shell") || !strings.Contains(body, "<p>fresh blocks</p>") {
+		t.Fatalf("CMS page body = %q, want template shell and rendered blocks", body)
+	}
+	if strings.Contains(body, "stale html") {
+		t.Fatalf("body_html rendered despite body_blocks being present: %q", body)
+	}
+}
+
 func TestServer_PublicCMSDraftDoesNotRender(t *testing.T) {
 	pages := store.NewMemoryPageStore()
 	if err := pages.Create(context.Background(), 1, &store.Page{
@@ -351,6 +391,46 @@ func TestServer_PublicCMSDraftDoesNotRender(t *testing.T) {
 	rec := doReqWithHost(t, s, http.MethodGet, "/draft", "gocodealone.tech", "", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("draft page status: got %d body=%q, want 404", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServer_PublicCMSScheduledPageWaitsForPublishAt(t *testing.T) {
+	publishAt := time.Now().UTC().Add(time.Hour)
+	pages := store.NewMemoryPageStore()
+	if err := pages.Create(context.Background(), 1, &store.Page{
+		TenantID:  1,
+		Path:      "/launch",
+		Title:     "Launch",
+		BodyHTML:  "<main>launch</main>",
+		Status:    store.StatusScheduled,
+		PublishAt: &publishAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := &stubResolver{
+		byHost: map[string]TenantInfo{
+			"gocodealone.tech": {TenantID: 1, TenantSlug: "gocodealone", Kind: "vanity"},
+		},
+	}
+	s := New(Config{TenantResolverStore: r, Pages: pages})
+
+	rec := doReqWithHost(t, s, http.MethodGet, "/launch", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("future scheduled page status: got %d body=%q, want 404", rec.Code, rec.Body.String())
+	}
+
+	publishAt = time.Now().UTC().Add(-time.Second)
+	page, err := pages.GetByPath(context.Background(), 1, "", "/launch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page.PublishAt = &publishAt
+	if err := pages.Update(context.Background(), 1, page); err != nil {
+		t.Fatal(err)
+	}
+	rec = doReqWithHost(t, s, http.MethodGet, "/launch", "gocodealone.tech", "", nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "launch") {
+		t.Fatalf("active scheduled page: got status=%d body=%q, want rendered", rec.Code, rec.Body.String())
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
 	"github.com/jackc/pgx/v5"
@@ -245,11 +246,12 @@ func (s *Store) Create(ctx context.Context, tenantID int64, p *store.Page) error
 		return err
 	}
 	row := s.pool.QueryRow(ctx, `
-		INSERT INTO pages (tenant_id, subsite, path, title, body_html, body_blocks, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO pages (tenant_id, subsite, path, title, body_html, body_blocks, status, template_id, publish_at, unpublish_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9, $10)
 		RETURNING id, tenant_id, COALESCE(subsite, ''), path, title, COALESCE(body_html, ''),
-			body_blocks, status, version, created_at, updated_at
-	`, tenantID, p.Subsite, p.Path, p.Title, p.BodyHTML, nullableJSON(p.BodyBlocks), p.Status)
+			body_blocks, status, COALESCE(template_id, ''), publish_at, unpublish_at,
+			version, created_at, updated_at
+	`, tenantID, p.Subsite, p.Path, p.Title, p.BodyHTML, nullableJSON(p.BodyBlocks), p.Status, p.TemplateID, nullableTime(p.PublishAt), nullableTime(p.UnpublishAt))
 	if err := scanPage(row, p); err != nil {
 		if isPGCode(err, pgUniqueViolation) {
 			return store.ErrPathConflict
@@ -303,11 +305,13 @@ func (s *Store) Update(ctx context.Context, tenantID int64, p *store.Page) error
 	err := scanPage(s.pool.QueryRow(ctx, `
 		UPDATE pages
 		SET subsite = $3, path = $4, title = $5, body_html = $6, body_blocks = $7,
-			status = $8, version = version + 1, updated_at = now()
+			status = $8, template_id = NULLIF($9, ''), publish_at = $10, unpublish_at = $11,
+			version = version + 1, updated_at = now()
 		WHERE tenant_id = $1 AND id = $2
 		RETURNING id, tenant_id, COALESCE(subsite, ''), path, title, COALESCE(body_html, ''),
-			body_blocks, status, version, created_at, updated_at
-	`, tenantID, p.ID, p.Subsite, p.Path, p.Title, p.BodyHTML, nullableJSON(p.BodyBlocks), p.Status), p)
+			body_blocks, status, COALESCE(template_id, ''), publish_at, unpublish_at,
+			version, created_at, updated_at
+	`, tenantID, p.ID, p.Subsite, p.Path, p.Title, p.BodyHTML, nullableJSON(p.BodyBlocks), p.Status, p.TemplateID, nullableTime(p.PublishAt), nullableTime(p.UnpublishAt)), p)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrNotFound
 	}
@@ -367,7 +371,8 @@ func (s *Store) tenantExists(ctx context.Context, tenantID int64) (bool, error) 
 
 func pageSelectSQL() string {
 	return `SELECT id, tenant_id, COALESCE(subsite, ''), path, title, COALESCE(body_html, ''),
-		body_blocks, status, version, created_at, updated_at FROM pages`
+		body_blocks, status, COALESCE(template_id, ''), publish_at, unpublish_at,
+		version, created_at, updated_at FROM pages`
 }
 
 type scanner interface {
@@ -384,8 +389,10 @@ func scanDomain(row scanner, d *store.Domain) error {
 
 func scanPage(row scanner, p *store.Page) error {
 	var (
-		bodyBlocks []byte
-		status     string
+		bodyBlocks  []byte
+		status      string
+		publishAt   sql.NullTime
+		unpublishAt sql.NullTime
 	)
 	if err := row.Scan(
 		&p.ID,
@@ -396,6 +403,9 @@ func scanPage(row scanner, p *store.Page) error {
 		&p.BodyHTML,
 		&bodyBlocks,
 		&status,
+		&p.TemplateID,
+		&publishAt,
+		&unpublishAt,
 		&p.Version,
 		&p.CreatedAt,
 		&p.UpdatedAt,
@@ -404,6 +414,18 @@ func scanPage(row scanner, p *store.Page) error {
 	}
 	p.BodyBlocks = bodyBlocks
 	p.Status = store.PageStatus(status)
+	if publishAt.Valid {
+		value := publishAt.Time.UTC()
+		p.PublishAt = &value
+	} else {
+		p.PublishAt = nil
+	}
+	if unpublishAt.Valid {
+		value := unpublishAt.Time.UTC()
+		p.UnpublishAt = &value
+	} else {
+		p.UnpublishAt = nil
+	}
 	return nil
 }
 
@@ -432,6 +454,13 @@ func nullableJSON(raw []byte) any {
 		return nil
 	}
 	return raw
+}
+
+func nullableTime(value *time.Time) any {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	return value.UTC()
 }
 
 func isPGCode(err error, code string) bool {

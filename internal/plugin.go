@@ -19,7 +19,11 @@ package internal
 import (
 	"fmt"
 
+	"github.com/GoCodeAlone/workflow-plugin-cms/internal/contracts"
+	pb "github.com/GoCodeAlone/workflow/plugin/external/proto"
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 // Version is set at build time via -ldflags.
@@ -86,5 +90,58 @@ func (p *CMSPlugin) CreateStep(typeName, name string, config map[string]any) (sd
 		return newBundleActivateStep(name, config), nil
 	default:
 		return nil, fmt.Errorf("unknown step type: %s", typeName)
+	}
+}
+
+// ContractRegistry returns the CMS plugin's strict protobuf contracts.
+func (p *CMSPlugin) ContractRegistry() *pb.ContractRegistry {
+	return &pb.ContractRegistry{
+		FileDescriptorSet: &descriptorpb.FileDescriptorSet{File: []*descriptorpb.FileDescriptorProto{
+			protodesc.ToFileDescriptorProto(contracts.File_internal_contracts_cms_proto),
+		}},
+		Contracts: []*pb.ContractDescriptor{
+			cmsModuleContract("cms.tenant_resolver", "TenantResolverConfig"),
+			cmsModuleContract("cms.static_serve_before_dynamic", "StaticServeBeforeDynamicConfig"),
+			cmsModuleContract("cms.engine", "EngineConfig"),
+			cmsModuleContract("analytics.injection", "AnalyticsInjectionConfig"),
+			cmsStepContract("step.cms_render_page", "CMSRenderPageStepConfig", "CMSRenderPageStepInput", "CMSRenderPageStepOutput"),
+			cmsStepContract("step.cms_bundle_activate", "CMSBundleActivateStepConfig", "CMSBundleActivateStepInput", "CMSBundleActivateStepOutput"),
+			cmsServiceContract("cms.engine", "CMSEngine", "AdminContribution", "CMSAdminContributionInput", "CMSAdminContributionOutput"),
+		},
+	}
+}
+
+func cmsModuleContract(moduleType, configMessage string) *pb.ContractDescriptor {
+	const pkg = "workflow.plugins.cms.v1."
+	return &pb.ContractDescriptor{
+		Kind:          pb.ContractKind_CONTRACT_KIND_MODULE,
+		ModuleType:    moduleType,
+		ConfigMessage: pkg + configMessage,
+		Mode:          pb.ContractMode_CONTRACT_MODE_STRICT_PROTO,
+	}
+}
+
+func cmsStepContract(stepType, configMessage, inputMessage, outputMessage string) *pb.ContractDescriptor {
+	const pkg = "workflow.plugins.cms.v1."
+	return &pb.ContractDescriptor{
+		Kind:          pb.ContractKind_CONTRACT_KIND_STEP,
+		StepType:      stepType,
+		ConfigMessage: pkg + configMessage,
+		InputMessage:  pkg + inputMessage,
+		OutputMessage: pkg + outputMessage,
+		Mode:          pb.ContractMode_CONTRACT_MODE_STRICT_PROTO,
+	}
+}
+
+func cmsServiceContract(moduleType, serviceName, method, inputMessage, outputMessage string) *pb.ContractDescriptor {
+	const pkg = "workflow.plugins.cms.v1."
+	return &pb.ContractDescriptor{
+		Kind:          pb.ContractKind_CONTRACT_KIND_SERVICE,
+		ModuleType:    moduleType,
+		ServiceName:   serviceName,
+		Method:        method,
+		InputMessage:  pkg + inputMessage,
+		OutputMessage: pkg + outputMessage,
+		Mode:          pb.ContractMode_CONTRACT_MODE_STRICT_PROTO,
 	}
 }

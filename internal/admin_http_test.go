@@ -8,12 +8,51 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
 )
 
 func newAdminTestAPI() *AdminAPI {
 	return NewAdminAPI(store.NewMemoryTenantAdminStore(), store.NewMemoryPageStore())
+}
+
+func TestAdmin_PageTemplateAndScheduleFieldsPersist(t *testing.T) {
+	api := newAdminTestAPI()
+	_, gotT := doJSON(t, api, http.MethodPost, "/api/v1/admin/tenants", map[string]string{"slug": "a"})
+	tid := int64(gotT["ID"].(float64))
+	publishAt := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC).Format(time.RFC3339)
+
+	rec, gotP := doJSON(t, api, http.MethodPost,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages",
+		map[string]any{
+			"path":        "/scheduled",
+			"title":       "Scheduled",
+			"body_html":   "<p>scheduled</p>",
+			"status":      "scheduled",
+			"template_id": "site-shell",
+			"publish_at":  publishAt,
+		})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create scheduled page: %d %v", rec.Code, gotP)
+	}
+	if gotP["TemplateID"] != "site-shell" {
+		t.Fatalf("TemplateID = %v, want site-shell", gotP["TemplateID"])
+	}
+	if gotP["PublishAt"] == nil {
+		t.Fatalf("PublishAt missing from response: %#v", gotP)
+	}
+
+	pid := int64(gotP["ID"].(float64))
+	rec, gotP = doJSON(t, api, http.MethodPut,
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages/"+strconv.FormatInt(pid, 10),
+		map[string]any{"template_id": "alt-shell", "status": "published"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update scheduled page: %d %v", rec.Code, gotP)
+	}
+	if gotP["TemplateID"] != "alt-shell" || gotP["Status"] != "published" {
+		t.Fatalf("updated page = %#v, want template/status persisted", gotP)
+	}
 }
 
 func doJSON(t *testing.T, h http.Handler, method, path string, body any) (*httptest.ResponseRecorder, map[string]any) {

@@ -21,6 +21,27 @@ message EngineConfig {
   string default_theme_id = 5;
 }
 
+message CMSAdminContributionInput {
+  bool authorized = 1;
+}
+
+message CMSAdminContribution {
+  string id = 1;
+  string title = 2;
+  string category = 3;
+  string path = 4;
+  string render_mode = 5;
+  string app_context = 6;
+  repeated string permissions = 7;
+  map<string, string> metadata = 8;
+  repeated string actions = 9;
+}
+
+message CMSAdminContributionOutput {
+  CMSAdminContribution contribution = 1;
+  string error = 100;
+}
+
 message AnalyticsInjectionConfig {
   string mode = 1;
 }

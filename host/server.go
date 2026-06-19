@@ -67,6 +67,10 @@ type Config struct {
 	TenantsAdmin store.TenantAdminStore
 	Pages        store.PageStore
 
+	// PageTemplates maps CMS template IDs to HTML shells containing
+	// <!--cms:body-->. Missing/empty template IDs render the page body only.
+	PageTemplates map[string]string
+
 	// TenantResolverStore is the read-side tenant lookup interface used
 	// by the resolver middleware. If both this and TenantsAdmin are
 	// nil, a memory-backed store is created and shared between them
@@ -401,17 +405,29 @@ func (s *Server) serveCMSPage(w http.ResponseWriter, r *http.Request, tenant Ten
 			http.Error(w, "page lookup failed", http.StatusInternalServerError)
 			return true
 		}
-		if p.Status != store.StatusPublished {
+		html, rendered, err := internal.RenderPageDocument(p, s.pageTemplate(p.TemplateID), time.Now().UTC())
+		if err != nil {
+			http.Error(w, "page render failed", http.StatusInternalServerError)
+			return true
+		}
+		if !rendered {
 			return false
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if r.Method != http.MethodHead {
-			body := analytics.InjectGtag([]byte(p.BodyHTML), s.analyticsConfigForTenant(tenant.TenantID))
+			body := analytics.InjectGtag([]byte(html), s.analyticsConfigForTenant(tenant.TenantID))
 			_, _ = w.Write(body)
 		}
 		return true
 	}
 	return false
+}
+
+func (s *Server) pageTemplate(id string) internal.PageTemplate {
+	if id == "" || len(s.cfg.PageTemplates) == 0 {
+		return internal.PageTemplate{}
+	}
+	return internal.PageTemplate{ID: id, HTML: s.cfg.PageTemplates[id]}
 }
 
 func resolveSPAFallbackPath(bundleRoot, slug string, r *http.Request) (string, bool) {

@@ -44,6 +44,33 @@ Published migrated content must reference relative media paths or object-store
 URLs owned by the site. Wix/parastorage/source-host media URLs are rejected
 until mirrored into site-owned storage.
 
+## Admin integration
+
+The `cms.engine` module exposes the strict service method
+`CMSEngine.AdminContribution`. Hosts such as `gocodealone-multisite` can call it
+to register the CMS site manager inside the extensible admin shell.
+
+The contribution requires the multisite admin scopes:
+
+- `admin:multisite.sites:read`
+- `admin:multisite.sites:update`
+- `admin:multisite.pages:read`
+- `admin:multisite.pages:update`
+- `admin:multisite.publish:update`
+- `admin:multisite.onboarding:plan`
+
+API route metadata is returned only when the caller passes `authorized: true`.
+That keeps route discovery behind the host's authz check while preserving the
+strict protobuf contract declared in `plugin.contracts.json`.
+
+## Persistence and backup
+
+CMS page documents are durable application state. Operators backing this plugin
+with Postgres must include the `pages` table in backup and restore runs,
+including `body_blocks`, `template_id`, `publish_at`, and `unpublish_at`.
+`body_blocks` is the canonical editor document when present; `body_html` remains
+the backward-compatible fallback for older pages.
+
 ## Install
 
 ```yaml

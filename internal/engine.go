@@ -49,6 +49,11 @@ func (m *engineModule) Stop(ctx context.Context) error  { return nil }
 
 func (m *engineModule) InvokeMethod(method string, args map[string]any) (map[string]any, error) {
 	switch method {
+	case "AdminContribution":
+		authorized, _ := args["authorized"].(bool)
+		contribution := CMSAdminContribution()
+		contribution.Metadata = CMSAdminContributionMetadata(authorized)
+		return map[string]any{"contribution": adminContributionMap(contribution)}, nil
 	case "OverlayClone":
 		input, err := overlayInputFromMap(args)
 		if err != nil {
@@ -148,4 +153,18 @@ func overlayFromAny(value any) (*StaticPageOverlay, error) {
 func boolValue(values map[string]any, key string) bool {
 	value, _ := values[key].(bool)
 	return value
+}
+
+func adminContributionMap(contribution AdminContribution) map[string]any {
+	return map[string]any{
+		"id":          contribution.ID,
+		"title":       contribution.Title,
+		"category":    contribution.Category,
+		"path":        contribution.Path,
+		"render_mode": contribution.RenderMode,
+		"app_context": contribution.AppContext,
+		"permissions": contribution.Permissions,
+		"metadata":    contribution.Metadata,
+		"actions":     contribution.Actions,
+	}
 }

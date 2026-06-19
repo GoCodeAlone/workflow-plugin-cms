@@ -62,6 +62,30 @@ func TestStaticServe_HitServesFile(t *testing.T) {
 	}
 }
 
+func TestStaticServe_StaticHitShortCircuitsCMSFallback(t *testing.T) {
+	root := t.TempDir()
+	makeBundle(t, root, "gocodealone", map[string]string{
+		"about.html": "static about",
+	})
+
+	m := newStaticServe(t, root)
+	handler := m.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("CMS fallback called despite exact static hit")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "http://gocodealone.com/about.html", nil)
+	req = req.WithContext(WithTenant(req.Context(), TenantInfo{TenantSlug: "gocodealone"}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q, want 200", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "static about" {
+		t.Fatalf("body = %q, want exact static file", rec.Body.String())
+	}
+}
+
 func TestStaticServe_RootResolvesToIndex(t *testing.T) {
 	root := t.TempDir()
 	makeBundle(t, root, "gocodealone", map[string]string{

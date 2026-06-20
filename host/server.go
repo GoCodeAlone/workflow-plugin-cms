@@ -27,8 +27,8 @@ import (
 	"github.com/GoCodeAlone/workflow-plugin-cms/bundle"
 	"github.com/GoCodeAlone/workflow-plugin-cms/internal"
 	"github.com/GoCodeAlone/workflow-plugin-cms/media"
-	"github.com/GoCodeAlone/workflow-plugin-cms/monitoring"
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
+	"github.com/GoCodeAlone/workflow/telemetry"
 )
 
 // Config controls the host wiring.
@@ -118,7 +118,7 @@ type Server struct {
 	admin      *internal.AdminAPI
 	ingest     *bundle.IngestHandler
 	media      *media.UploadHandler
-	metrics    *monitoring.Counters
+	metrics    *requestCounters
 	audit      *audit.Logger
 	adminUI    http.Handler
 	adminRoot  http.Handler
@@ -161,7 +161,7 @@ func New(cfg Config) *Server {
 	if cfg.MediaBackend != nil {
 		s.media = &media.UploadHandler{Backend: cfg.MediaBackend}
 	}
-	s.metrics = monitoring.New()
+	s.metrics = newRequestCounters()
 	if cfg.AuditSignKey != "" {
 		s.audit = audit.New(cfg.AuditSignKey, cfg.AuditSink)
 		s.admin.Audit = s.audit
@@ -173,12 +173,15 @@ func New(cfg Config) *Server {
 	return s
 }
 
-// Metrics returns the in-process request counters for host observability
-// adapters.
-func (s *Server) Metrics() *monitoring.Counters { return s.metrics }
-
 // Audit returns the audit Logger if configured. May be nil.
 func (s *Server) Audit() *audit.Logger { return s.audit }
+
+func (s *Server) EmitMetrics(_ context.Context, recorder telemetry.MetricRecorder) error {
+	if s.metrics != nil {
+		s.metrics.emit(recorder)
+	}
+	return nil
+}
 
 // flushCaches clears the in-memory tenant lookup cache. Called by the
 // /api/v1/admin/reload endpoint (T31).
@@ -201,7 +204,7 @@ func (s *Server) flushCaches() error {
 // on the resolved tenant slug (or "_unresolved" for admin/system
 // routes).
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	rec := &monitoring.StatusRecorder{ResponseWriter: w, Status: http.StatusOK}
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	tenantSlug := ""
 
 	defer func() {
@@ -210,7 +213,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if label == "" {
 				label = "_unresolved"
 			}
-			s.metrics.Inc(label, rec.Status)
+			s.metrics.inc(label, rec.status)
 		}
 	}()
 

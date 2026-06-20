@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/media"
+	"github.com/GoCodeAlone/workflow/telemetry"
 )
 
 // fakeResolver returns the configured tenants by host or slug.
@@ -73,10 +74,9 @@ func TestIntegration_FullMatrix(t *testing.T) {
 		// counter for the slug proves resolution worked.
 		_ = want
 	}
-	snap := srv.Metrics().Snapshot()
 	for _, slug := range []string{"acme", "beta", "gamma"} {
-		if snap[slug] != 1 {
-			t.Errorf("V1/V2 vanity resolve: tenant %q counter = %d want 1", slug, snap[slug])
+		if got := tenantRequestMetric(t, srv, slug); got != 1 {
+			t.Errorf("V1/V2 vanity resolve: tenant %q counter = %v want 1", slug, got)
 		}
 	}
 
@@ -92,9 +92,8 @@ func TestIntegration_FullMatrix(t *testing.T) {
 		srv.ServeHTTP(rec, req)
 		_ = slug
 	}
-	snap = srv.Metrics().Snapshot()
-	if snap["acme"] != 2 || snap["beta"] != 2 || snap["gamma"] != 2 {
-		t.Errorf("V22 preview resolve: %v want each tenant = 2", snap)
+	if tenantRequestMetric(t, srv, "acme") != 2 || tenantRequestMetric(t, srv, "beta") != 2 || tenantRequestMetric(t, srv, "gamma") != 2 {
+		t.Errorf("V22 preview resolve: want each tenant = 2")
 	}
 
 	// 4. Unknown vanity → 404 neutral (V16).
@@ -166,15 +165,45 @@ func TestIntegration_FullMatrix(t *testing.T) {
 		}
 	}
 
-	// 10. The host no longer exposes a bespoke /metrics endpoint; counters
-	// remain available internally for OTel/host adapters.
+	// 10. Neutral telemetry — global counter includes every request above.
 	rec = request(srv, "GET", "/metrics", "", nil)
 	if rec.Code != http.StatusNotFound {
-		t.Errorf("T30 /metrics: %d", rec.Code)
+		t.Errorf("T30 /metrics removed: %d", rec.Code)
 	}
-	if snap := srv.Metrics().Snapshot(); snap["_global"] == 0 {
-		t.Errorf("T30 metrics counter did not record requests")
+	if got := metricValue(t, srv, "multisite_requests_total", nil); got == 0 {
+		t.Errorf("T30 neutral metrics global counter = %v, want > 0", got)
 	}
+}
+
+func tenantRequestMetric(t *testing.T, srv *Server, tenant string) float64 {
+	t.Helper()
+	return metricValue(t, srv, "multisite_tenant_requests_total", telemetry.Attrs{"tenant": tenant})
+}
+
+func metricValue(t *testing.T, srv *Server, name string, attrs telemetry.Attrs) float64 {
+	t.Helper()
+	recorder := telemetry.NewSnapshotRecorder()
+	if err := srv.EmitMetrics(context.Background(), recorder); err != nil {
+		t.Fatal(err)
+	}
+	for _, metric := range recorder.Metrics() {
+		if metric.Name == name && telemetryAttrsMatch(metric.Attrs, attrs) {
+			return metric.Value
+		}
+	}
+	return 0
+}
+
+func telemetryAttrsMatch(got, want telemetry.Attrs) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for k, v := range want {
+		if got[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 func request(h http.Handler, method, target, contentType string, body interface {

@@ -65,6 +65,8 @@ func TestHandler_ServesJS(t *testing.T) {
 		"pagePayload",
 		"dateTimeLocalToISO",
 		"renderPreviewDocument",
+		"sanitizedFragmentFromHTML",
+		"copySafeAttrs",
 	} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("js body missing %q", want)

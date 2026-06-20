@@ -251,9 +251,6 @@ function initRichEditors(root = document) {
     surface.addEventListener("input", () => {
       source.value = surface.innerHTML;
     });
-    source.addEventListener("input", () => {
-      if (!source.hidden) surface.innerHTML = source.value;
-    });
   });
 }
 
@@ -267,7 +264,8 @@ function toggleSourceMode(editor) {
     source.focus();
     return;
   }
-  surface.innerHTML = source.value;
+  setEditorSurfaceHTML(surface, source.value);
+  source.value = surface.innerHTML;
   source.hidden = true;
   surface.hidden = false;
   surface.focus();
@@ -280,7 +278,8 @@ function syncRichEditors(root) {
     if (source.hidden) {
       source.value = surface.innerHTML;
     } else {
-      surface.innerHTML = source.value;
+      setEditorSurfaceHTML(surface, source.value);
+      source.value = surface.innerHTML;
     }
   });
 }
@@ -289,11 +288,86 @@ function setRichEditorHTML(root, html) {
   $$("[data-rich-editor]", root).forEach(editor => {
     const surface = $("[data-editor-surface]", editor);
     const source = $("[data-editor-source]", editor);
-    surface.innerHTML = html || "";
+    setEditorSurfaceHTML(surface, html || "");
     surface.hidden = false;
-    source.value = html || "";
+    source.value = surface.innerHTML;
     source.hidden = true;
   });
+}
+
+function setEditorSurfaceHTML(surface, html) {
+  surface.replaceChildren(sanitizedFragmentFromHTML(html || ""));
+}
+
+function sanitizedFragmentFromHTML(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const frag = document.createDocumentFragment();
+  doc.body.childNodes.forEach(node => {
+    const clean = sanitizeNode(node);
+    if (clean) frag.appendChild(clean);
+  });
+  return frag;
+}
+
+function sanitizeNode(node) {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return document.createTextNode(node.textContent || "");
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return null;
+  }
+  const tag = node.tagName.toLowerCase();
+  const allowed = new Set([
+    "a", "article", "blockquote", "br", "code", "div", "em", "h1", "h2", "h3",
+    "h4", "h5", "h6", "hr", "i", "img", "li", "main", "ol", "p", "pre",
+    "section", "span", "strong", "u", "ul",
+  ]);
+  const container = allowed.has(tag) ? document.createElement(tag) : document.createDocumentFragment();
+  if (container.nodeType === Node.ELEMENT_NODE) {
+    copySafeAttrs(node, container);
+  }
+  node.childNodes.forEach(child => {
+    const clean = sanitizeNode(child);
+    if (clean) container.appendChild(clean);
+  });
+  return container;
+}
+
+function copySafeAttrs(source, target) {
+  for (const attr of source.attributes) {
+    const name = attr.name.toLowerCase();
+    const value = attr.value || "";
+    if (name === "class" || name === "id" || name === "title" || name === "alt") {
+      target.setAttribute(name, value);
+      continue;
+    }
+    if (name.startsWith("data-")) {
+      target.setAttribute(name, value);
+      continue;
+    }
+    if (target.tagName === "A" && name === "href" && safeURL(value)) {
+      target.setAttribute("href", value);
+      continue;
+    }
+    if (target.tagName === "A" && name === "target" && value === "_blank") {
+      target.setAttribute("target", "_blank");
+      target.setAttribute("rel", "noopener noreferrer");
+      continue;
+    }
+    if (target.tagName === "IMG" && name === "src" && safeURL(value)) {
+      target.setAttribute("src", value);
+    }
+  }
+}
+
+function safeURL(value) {
+  const trimmed = String(value || "").trim();
+  return trimmed.startsWith("/") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("mailto:") ||
+    trimmed.startsWith("tel:");
 }
 
 function renderPreviewDocument(form) {

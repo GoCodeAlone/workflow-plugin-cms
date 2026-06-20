@@ -52,8 +52,8 @@ func TestReleaseMetadataIsPublishable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if manifest.MinEngineVersion != "0.64.4" {
-		t.Fatalf("minEngineVersion = %q, want 0.64.4", manifest.MinEngineVersion)
+	if manifest.MinEngineVersion != "0.80.24" {
+		t.Fatalf("minEngineVersion = %q, want 0.80.24", manifest.MinEngineVersion)
 	}
 
 	wantDownloads := []string{
@@ -147,7 +147,7 @@ func TestReleaseWorkflowFollowsCurrentPluginPattern(t *testing.T) {
 	src := string(data)
 	for _, want := range []string{
 		"GoCodeAlone/setup-wfctl@v1",
-		"version: v0.64.4",
+		"version: v0.80.24",
 		"wfctl plugin validate-contract --for-publish --tag",
 		"wfctl plugin verify-capabilities --binary",
 		"Verify shipped plugin.json carries tag",

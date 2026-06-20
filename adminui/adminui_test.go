@@ -18,6 +18,21 @@ func TestHandler_ServesIndex(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Multisite Admin") {
 		t.Errorf("body did not contain title; got prefix %q", rec.Body.String()[:120])
 	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-rich-editor`,
+		`data-editor-command="bold"`,
+		`name="template_id"`,
+		`name="publish_at"`,
+		`name="unpublish_at"`,
+		`value="scheduled"`,
+		`role="textbox"`,
+		`aria-multiline="true"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("index missing %q", want)
+		}
+	}
 }
 
 func TestHandler_ServesCSS(t *testing.T) {
@@ -46,6 +61,19 @@ func TestHandler_ServesJS(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "createTenant") {
 		t.Errorf("js body missing expected symbol")
+	}
+	for _, want := range []string{
+		"initRichEditors",
+		"pagePayload",
+		"dateTimeLocalToISO",
+		"renderPreviewDocument",
+		"sourceAuthoritative",
+		"safeEditorURL",
+		`setAttribute("sandbox", "")`,
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("js body missing %q", want)
+		}
 	}
 }
 

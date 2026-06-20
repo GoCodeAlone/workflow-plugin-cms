@@ -66,11 +66,30 @@
             <select name="status">
               <option value="draft">draft</option>
               <option value="published">published</option>
+              <option value="scheduled">scheduled</option>
+              <option value="archived">archived</option>
             </select>
           </label>
-          <label>Body HTML
-            <textarea name="body_html" rows="12" placeholder="<main>...</main>"></textarea>
-          </label>
+          <label>Template <input name="template_id" placeholder="default"></label>
+          <label>Publish at <input name="publish_at" type="datetime-local"></label>
+          <label>Unpublish at <input name="unpublish_at" type="datetime-local"></label>
+          <div class="form-row full">
+            <span>Body</span>
+            <div class="rich-editor" data-rich-editor>
+              <div class="editor-toolbar" role="toolbar" aria-label="Page editor tools">
+                <button type="button" data-editor-command="formatBlock" data-editor-value="h2">H2</button>
+                <button type="button" data-editor-command="formatBlock" data-editor-value="h3">H3</button>
+                <button type="button" data-editor-command="bold"><strong>B</strong></button>
+                <button type="button" data-editor-command="italic"><em>I</em></button>
+                <button type="button" data-editor-command="insertUnorderedList">List</button>
+                <button type="button" data-editor-command="formatBlock" data-editor-value="blockquote">Quote</button>
+                <button type="button" data-editor-action="link">Link</button>
+                <button type="button" data-editor-action="source">HTML</button>
+              </div>
+              <div class="editor-surface" contenteditable="true" role="textbox" aria-multiline="true" data-editor-surface aria-label="Page body"></div>
+              <textarea name="body_html" rows="12" data-editor-source hidden></textarea>
+            </div>
+          </div>
           <div class="form-actions">
             <button type="submit">Save page</button>
             <button id="btn-page-preview" type="button">Preview</button>
@@ -88,11 +107,30 @@
             <select name="status">
               <option value="draft">draft</option>
               <option value="published">published</option>
+              <option value="scheduled">scheduled</option>
+              <option value="archived">archived</option>
             </select>
           </label>
-          <label>Body HTML
-            <textarea name="body_html" rows="8" placeholder="<h1>...</h1>"></textarea>
-          </label>
+          <label>Template <input name="template_id" placeholder="default"></label>
+          <label>Publish at <input name="publish_at" type="datetime-local"></label>
+          <label>Unpublish at <input name="unpublish_at" type="datetime-local"></label>
+          <div class="form-row full">
+            <span>Body</span>
+            <div class="rich-editor" data-rich-editor>
+              <div class="editor-toolbar" role="toolbar" aria-label="New page editor tools">
+                <button type="button" data-editor-command="formatBlock" data-editor-value="h2">H2</button>
+                <button type="button" data-editor-command="formatBlock" data-editor-value="h3">H3</button>
+                <button type="button" data-editor-command="bold"><strong>B</strong></button>
+                <button type="button" data-editor-command="italic"><em>I</em></button>
+                <button type="button" data-editor-command="insertUnorderedList">List</button>
+                <button type="button" data-editor-command="formatBlock" data-editor-value="blockquote">Quote</button>
+                <button type="button" data-editor-action="link">Link</button>
+                <button type="button" data-editor-action="source">HTML</button>
+              </div>
+              <div class="editor-surface" contenteditable="true" role="textbox" aria-multiline="true" data-editor-surface aria-label="New page body"></div>
+              <textarea name="body_html" rows="8" data-editor-source hidden></textarea>
+            </div>
+          </div>
           <button type="submit">Create page</button>
         </form>
       </details>

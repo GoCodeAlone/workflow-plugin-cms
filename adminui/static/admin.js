@@ -35,6 +35,44 @@ const api = {
 
 let currentTenant = null;
 
+function pagePayload(form) {
+  syncRichEditors(form);
+  const fd = new FormData(form);
+  const payload = {
+    path: fd.get("path"),
+    title: fd.get("title"),
+    status: fd.get("status"),
+    body_html: fd.get("body_html"),
+    template_id: fd.get("template_id") || "",
+  };
+  const publishAt = dateTimeLocalToISO(fd.get("publish_at"));
+  if (publishAt) payload.publish_at = publishAt;
+  const unpublishAt = dateTimeLocalToISO(fd.get("unpublish_at"));
+  if (unpublishAt) payload.unpublish_at = unpublishAt;
+  return payload;
+}
+
+function dateTimeLocalToISO(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString();
+}
+
+function isoToDateTimeLocal(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = n => String(n).padStart(2, "0");
+  return (
+    d.getFullYear() + "-" +
+    pad(d.getMonth() + 1) + "-" +
+    pad(d.getDate()) + "T" +
+    pad(d.getHours()) + ":" +
+    pad(d.getMinutes())
+  );
+}
+
 function toast(msg, kind) {
   const t = $("#toast");
   t.textContent = msg;
@@ -156,7 +194,10 @@ async function openPageEditor(pid) {
     form.elements.path.value = p.Path || "";
     form.elements.title.value = p.Title || "";
     form.elements.status.value = p.Status || "draft";
-    form.elements.body_html.value = p.BodyHTML || "";
+    form.elements.template_id.value = p.TemplateID || "";
+    form.elements.publish_at.value = isoToDateTimeLocal(p.PublishAt);
+    form.elements.unpublish_at.value = isoToDateTimeLocal(p.UnpublishAt);
+    setRichEditorHTML(form, p.BodyHTML || "");
     $("#page-preview").hidden = true;
     $("#page-editor-section").hidden = false;
   } catch (e) { fail(e); }
@@ -166,6 +207,7 @@ function closePageEditor() {
   $("#page-editor-section").hidden = true;
   $("#page-preview").hidden = true;
   $("#page-editor-form").reset();
+  setRichEditorHTML($("#page-editor-form"), "");
 }
 
 function escapeHTML(s) {
@@ -177,8 +219,115 @@ function escapeHTML(s) {
     .replace(/'/g, "&#39;");
 }
 
+function initRichEditors(root = document) {
+  $$("[data-rich-editor]", root).forEach(editor => {
+    const surface = $("[data-editor-surface]", editor);
+    const source = $("[data-editor-source]", editor);
+    editor.addEventListener("click", ev => {
+      const command = ev.target.closest("[data-editor-command]");
+      if (command) {
+        ev.preventDefault();
+        surface.focus();
+        document.execCommand(command.dataset.editorCommand, false, command.dataset.editorValue || null);
+        editor.dataset.sourceAuthoritative = "false";
+        source.value = surface.innerHTML;
+        return;
+      }
+      const action = ev.target.closest("[data-editor-action]");
+      if (!action) return;
+      ev.preventDefault();
+      if (action.dataset.editorAction === "link") {
+        const url = prompt("Link URL");
+        if (url && safeEditorURL(url)) {
+          surface.focus();
+          document.execCommand("createLink", false, url);
+          editor.dataset.sourceAuthoritative = "false";
+          source.value = surface.innerHTML;
+        } else if (url) {
+          toast("Unsupported link URL", "error");
+        }
+        return;
+      }
+      if (action.dataset.editorAction === "source") {
+        toggleSourceMode(editor);
+      }
+    });
+    surface.addEventListener("input", () => {
+      editor.dataset.sourceAuthoritative = "false";
+      source.value = surface.innerHTML;
+    });
+  });
+}
+
+function toggleSourceMode(editor) {
+  const surface = $("[data-editor-surface]", editor);
+  const source = $("[data-editor-source]", editor);
+  if (source.hidden) {
+    if (editor.dataset.sourceAuthoritative !== "true") {
+      source.value = surface.innerHTML;
+    }
+    surface.hidden = true;
+    source.hidden = false;
+    source.focus();
+    return;
+  }
+  surface.textContent = source.value;
+  editor.dataset.sourceAuthoritative = "true";
+  source.hidden = true;
+  surface.hidden = false;
+  surface.focus();
+}
+
+function syncRichEditors(root) {
+  $$("[data-rich-editor]", root).forEach(editor => {
+    const surface = $("[data-editor-surface]", editor);
+    const source = $("[data-editor-source]", editor);
+    if (source.hidden) {
+      if (editor.dataset.sourceAuthoritative !== "true") {
+        source.value = surface.innerHTML;
+      }
+    } else {
+      surface.textContent = source.value;
+      editor.dataset.sourceAuthoritative = "true";
+    }
+  });
+}
+
+function setRichEditorHTML(root, html) {
+  $$("[data-rich-editor]", root).forEach(editor => {
+    const surface = $("[data-editor-surface]", editor);
+    const source = $("[data-editor-source]", editor);
+    surface.textContent = html || "";
+    surface.hidden = false;
+    source.value = html || "";
+    editor.dataset.sourceAuthoritative = html ? "true" : "false";
+    source.hidden = true;
+  });
+}
+
+function safeEditorURL(value) {
+  const trimmed = String(value || "").trim().toLowerCase();
+  return trimmed.startsWith("/") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("mailto:") ||
+    trimmed.startsWith("tel:");
+}
+
+function renderPreviewDocument(form) {
+  syncRichEditors(form);
+  const title = escapeHTML(form.elements.title.value || "Untitled");
+  const body = form.elements.body_html.value || "";
+  return "<!doctype html><html><head><meta charset=\"utf-8\"><style>" +
+    "body{font:16px/1.5 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:2rem;color:#111827}" +
+    "main{max-width:760px;margin:auto} img{max-width:100%;height:auto} blockquote{border-left:4px solid #d1d5db;margin-left:0;padding-left:1rem;color:#4b5563}" +
+    "</style><title>" + title + "</title></head><body><main>" + body + "</main></body></html>";
+}
+
 // Event wiring.
 document.addEventListener("DOMContentLoaded", () => {
+  initRichEditors();
   refreshTenants();
 
   $("#new-tenant-form").addEventListener("submit", async (ev) => {
@@ -213,15 +362,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("#new-page-form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const fd = new FormData(ev.target);
     try {
-      await api.createPage(currentTenant.ID, {
-        path: fd.get("path"),
-        title: fd.get("title"),
-        status: fd.get("status"),
-        body_html: fd.get("body_html"),
-      });
+      await api.createPage(currentTenant.ID, pagePayload(ev.target));
       ev.target.reset();
+      setRichEditorHTML(ev.target, "");
       toast("Page created", "ok");
       refreshPages();
     } catch (e) { fail(e); }
@@ -232,20 +376,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const fd = new FormData(ev.target);
     try {
       const pid = parseInt(fd.get("id"), 10);
-      await api.updatePage(currentTenant.ID, pid, {
-        path: fd.get("path"),
-        title: fd.get("title"),
-        status: fd.get("status"),
-        body_html: fd.get("body_html"),
-      });
+      await api.updatePage(currentTenant.ID, pid, pagePayload(ev.target));
       toast("Page saved", "ok");
       refreshPages();
     } catch (e) { fail(e); }
   });
 
   $("#btn-page-preview").addEventListener("click", () => {
+    const form = $("#page-editor-form");
     const frame = $("#page-preview");
-    frame.srcdoc = $("#page-editor-form").elements.body_html.value || "";
+    frame.setAttribute("sandbox", "");
+    frame.setAttribute("referrerpolicy", "no-referrer");
+    frame.srcdoc = renderPreviewDocument(form);
     frame.hidden = false;
   });
 

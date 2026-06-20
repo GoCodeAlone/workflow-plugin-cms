@@ -238,11 +238,13 @@ function initRichEditors(root = document) {
       ev.preventDefault();
       if (action.dataset.editorAction === "link") {
         const url = prompt("Link URL");
-        if (url) {
+        if (url && safeEditorURL(url)) {
           surface.focus();
           document.execCommand("createLink", false, url);
           editor.dataset.sourceAuthoritative = "false";
           source.value = surface.innerHTML;
+        } else if (url) {
+          toast("Unsupported link URL", "error");
         }
         return;
       }
@@ -301,6 +303,16 @@ function setRichEditorHTML(root, html) {
     editor.dataset.sourceAuthoritative = html ? "true" : "false";
     source.hidden = true;
   });
+}
+
+function safeEditorURL(value) {
+  const trimmed = String(value || "").trim().toLowerCase();
+  return trimmed.startsWith("/") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("mailto:") ||
+    trimmed.startsWith("tel:");
 }
 
 function renderPreviewDocument(form) {
@@ -373,6 +385,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#btn-page-preview").addEventListener("click", () => {
     const form = $("#page-editor-form");
     const frame = $("#page-preview");
+    frame.setAttribute("sandbox", "");
+    frame.setAttribute("referrerpolicy", "no-referrer");
     frame.srcdoc = renderPreviewDocument(form);
     frame.hidden = false;
   });

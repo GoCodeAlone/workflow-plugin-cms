@@ -26,6 +26,8 @@ func TestHandler_ServesIndex(t *testing.T) {
 		`name="publish_at"`,
 		`name="unpublish_at"`,
 		`value="scheduled"`,
+		`role="textbox"`,
+		`aria-multiline="true"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("index missing %q", want)
@@ -66,6 +68,8 @@ func TestHandler_ServesJS(t *testing.T) {
 		"dateTimeLocalToISO",
 		"renderPreviewDocument",
 		"sourceAuthoritative",
+		"safeEditorURL",
+		`setAttribute("sandbox", "")`,
 	} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("js body missing %q", want)

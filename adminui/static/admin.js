@@ -243,10 +243,11 @@ function initRichEditors(root = document) {
   $$("[data-rich-editor]", root).forEach(editor => {
     const surface = $(":scope > [data-editor-surface]", editor);
     const source = $(":scope > [data-editor-source]", editor);
+    const toolbar = $(":scope > .editor-toolbar", editor);
     installEventTool(editor);
     editor.addEventListener("click", ev => {
       const command = ev.target.closest("[data-editor-command]");
-      if (command) {
+      if (command && toolbar.contains(command)) {
         ev.preventDefault();
         if (!source.hidden) { toast("Switch to visual editing before using formatting tools.", "error"); return; }
         if (editor.dataset.advanced === "true") { toast("Edit advanced markup in HTML source to preserve it.", "error"); return; }
@@ -257,7 +258,7 @@ function initRichEditors(root = document) {
         return;
       }
       const action = ev.target.closest("[data-editor-action]");
-      if (!action) return;
+      if (!action || !toolbar.contains(action)) return;
       ev.preventDefault();
       if (["link","event"].includes(action.dataset.editorAction) && (!source.hidden || editor.dataset.advanced === "true")) { toast("Switch to visual editing before using this tool.", "error"); return; }
       if (action.dataset.editorAction === "link") {
@@ -279,13 +280,39 @@ function initRichEditors(root = document) {
         const tool = $(":scope > [data-event-tool]", editor);
         syncRichEditors(editor);
         const picker = $("[data-event-picker]", tool);
-        picker.replaceChildren(new Option("New event", ""), ...[...new DOMParser().parseFromString(source.value, "text/html").querySelectorAll("[data-event]")].map(el => new Option(el.dataset.eventTitle || el.dataset.eventId, el.dataset.eventId)));
+        picker.replaceChildren(new Option("New event", ""), ...[...surface.querySelectorAll("[data-event]")].map(el => new Option(el.dataset.eventTitle || el.dataset.eventId, el.dataset.eventId)));
         tool.hidden = !tool.hidden;
       }
     });
     surface.addEventListener("input", () => {
       editor.dataset.sourceAuthoritative = "false";
       source.value = editorHTML(surface);
+    });
+    surface.addEventListener("paste", ev => {
+      ev.preventDefault();
+      try {
+        const html = ev.clipboardData?.getData("text/html");
+        const fragment = html ? sanitizeEditorDOM(html) : document.createDocumentFragment();
+        if (!html) fragment.append(document.createTextNode(ev.clipboardData?.getData("text/plain") || ""));
+        scopeEditorImages(fragment);
+        const selection = window.getSelection();
+        let range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        if (!range || !surface.contains(range.commonAncestorContainer)) {
+          range = document.createRange(); range.selectNodeContents(surface); range.collapse(false);
+        }
+        range.deleteContents();
+        const last = fragment.lastChild;
+        range.insertNode(fragment);
+        if (last) range.setStartAfter(last);
+        range.collapse(true); selection?.removeAllRanges(); selection?.addRange(range);
+        editor.dataset.sourceAuthoritative = "false";
+        source.value = editorHTML(surface);
+      } catch (e) { toast(e.message, "error"); }
+    });
+    surface.addEventListener("dragover", ev => ev.preventDefault());
+    surface.addEventListener("drop", ev => {
+      ev.preventDefault();
+      toast("Paste content or use the HTML source editor to add it.", "error");
     });
   });
 }
@@ -310,37 +337,39 @@ function installEventTool(editor) {
   });
   const apply = document.createElement("button"); apply.type = "button"; apply.textContent = "Apply event to page"; tool.append(apply); editor.append(tool);
   $("[data-event-picker]", tool).onchange = ev => {
+    if (!$(":scope > [data-editor-source]", editor).hidden || editor.dataset.advanced === "true") { tool.hidden = true; return; }
     syncRichEditors(editor);
-    const el = [...new DOMParser().parseFromString($(":scope > [data-editor-source]", editor).value, "text/html").querySelectorAll("[data-event]")].find(el => el.dataset.eventId === ev.target.value);
+    const el = [...$(":scope > [data-editor-surface]", editor).querySelectorAll("[data-event]")].find(el => el.dataset.eventId === ev.target.value);
     $$("[data-event-field]", tool).forEach(input => {
       input.value = el ? el.dataset["event" + input.dataset.eventField[0].toUpperCase() + input.dataset.eventField.slice(1)] || "" : "";
     });
   };
   apply.onclick = () => {
+    if (!$(":scope > [data-editor-source]", editor).hidden || editor.dataset.advanced === "true") { tool.hidden = true; toast("Switch to visual editing before using this tool.", "error"); return; }
     const values = Object.fromEntries($$("[data-event-field]", tool).map(input => [input.dataset.eventField, input.value.trim()]));
     try {
       if (!/^[a-z0-9-]+$/.test(values.id) || !values.title || !values.project || !values.venue || !values.city) throw new Error("Complete the event identity, title, project and location.");
       const validDate = validEventDate;
-      if (!validDate(values.start) || (values.end && (!validDate(values.end) || Date.parse(values.end) <= Date.parse(values.start)))) throw new Error("Use valid ISO dates with offsets and an end after the start.");
+      if (!validDate(values.start) || !validDate(values.end) || Date.parse(values.end) <= Date.parse(values.start)) throw new Error("Start and end are required: use valid ISO dates with offsets and an end after the start.");
       new Intl.DateTimeFormat("en", { timeZone: values.timezone }).format(new Date());
       if (!["classical", "studio", "metal"].includes(values.persona) || !["confirmed", "postponed", "cancelled"].includes(values.status)) throw new Error("Choose a supported persona and event status.");
       if (!/^https:\/\//.test(values.source) || !safeEditorURL(values.source) || (values.ticket && (!/^https:\/\//.test(values.ticket) || !safeEditorURL(values.ticket))) || !validEventDate(values.verified+"T00:00:00Z")) throw new Error("Use HTTPS source/ticket links and a real verification date.");
       syncRichEditors(editor);
       const source = $(":scope > [data-editor-source]", editor);
-      const doc = new DOMParser().parseFromString(source.value, "text/html");
+      const doc = $(":scope > [data-editor-surface]", editor).cloneNode(true);
       const selected = $("[data-event-picker]", tool).value;
       const prior = [...doc.querySelectorAll("[data-event]")].find(el => el.dataset.eventId === selected);
       if ([...doc.querySelectorAll("[data-event]")].some(el => el !== prior && el.dataset.eventId === values.id)) throw new Error("This event ID already exists.");
-      const article = doc.createElement("article"); article.dataset.event = ""; article.className = "event-card";
+      const article = document.createElement("article"); article.dataset.event = ""; article.className = "event-card";
       Object.entries(values).forEach(([key, value]) => { article.dataset["event" + key[0].toUpperCase() + key.slice(1)] = value; });
-      const title = doc.createElement("h3"); title.textContent = values.title;
-      const time = doc.createElement("time"); time.dateTime = values.start; time.textContent = values.start + " · " + values.timezone;
-      const location = doc.createElement("p"); location.textContent = values.project + " · " + values.venue + ", " + values.city;
-      const link = doc.createElement("a"); link.href = values.ticket || values.source; link.textContent = values.ticket ? "Tickets & details" : "Event source";
-      const verified = doc.createElement("p"); verified.className = "small"; verified.textContent = "Verified " + values.verified + " · " + values.status;
+      const title = document.createElement("h3"); title.textContent = values.title;
+      const time = document.createElement("time"); time.dateTime = values.start; time.textContent = values.start + " · " + values.timezone;
+      const location = document.createElement("p"); location.textContent = values.project + " · " + values.venue + ", " + values.city;
+      const link = document.createElement("a"); link.href = values.ticket || values.source; link.textContent = values.ticket ? "Tickets & details" : "Event source";
+      const verified = document.createElement("p"); verified.className = "small"; verified.textContent = "Verified " + values.verified + " · " + values.status;
       article.append(title, time, location, link, verified);
-      if (prior) prior.replaceWith(article); else (doc.querySelector("[data-event-list]") || doc.body).append(article);
-      setRichEditorHTML(editor, doc.body.innerHTML); tool.hidden = true;
+      if (prior) prior.replaceWith(article); else (doc.querySelector("[data-event-list]") || doc).append(article);
+      setRichEditorHTML(editor, editorHTML(doc)); tool.hidden = true;
       toast("Event updated in page. Save to persist.", "ok");
     } catch (e) { toast(e.message, "error"); }
   };
@@ -357,6 +386,8 @@ function validEventDate(value) {
 }
 
 function toggleSourceMode(editor) {
+  const eventTool = $(":scope > [data-event-tool]", editor);
+  if (eventTool) eventTool.hidden = true;
   const surface = $(":scope > [data-editor-surface]", editor);
   const source = $(":scope > [data-editor-source]", editor);
   if (source.hidden) {
@@ -368,9 +399,9 @@ function toggleSourceMode(editor) {
     source.focus();
     return;
   }
-  const safe = sanitizeEditorHTML(source.value);
+  const safe = sanitizeEditorDOM(source.value);
   if (hasAdvancedMarkup(source.value, safe)) { setSourceNotice(editor, true); return; }
-  surface.innerHTML = safe;
+  surface.replaceChildren(safe);
   setSourceNotice(editor, false);
   scopeEditorImages(surface);
   editor.dataset.sourceAuthoritative = "true";
@@ -388,8 +419,10 @@ function syncRichEditors(root) {
         source.value = editorHTML(surface);
       }
     } else {
-      surface.innerHTML = sanitizeEditorHTML(source.value);
-      setSourceNotice(editor, hasAdvancedMarkup(source.value, surface.innerHTML));
+      const safe = sanitizeEditorDOM(source.value);
+      const advanced = hasAdvancedMarkup(source.value, safe);
+      surface.replaceChildren(safe);
+      setSourceNotice(editor, advanced);
       scopeEditorImages(surface);
       editor.dataset.sourceAuthoritative = "true";
     }
@@ -398,13 +431,20 @@ function syncRichEditors(root) {
 
 function setRichEditorHTML(root, html) {
   richEditors(root).forEach(editor => {
+    const eventTool = $(":scope > [data-event-tool]", editor);
+    if (eventTool) {
+      eventTool.hidden = true;
+      $("[data-event-picker]", eventTool).replaceChildren(new Option("New event", ""));
+      $$("[data-event-field]", eventTool).forEach(input => { input.value = ""; });
+    }
     const surface = $(":scope > [data-editor-surface]", editor);
     const source = $(":scope > [data-editor-source]", editor);
-    surface.innerHTML = sanitizeEditorHTML(html || "");
+    const safe = sanitizeEditorDOM(html || "");
+    const advanced = hasAdvancedMarkup(html || "", safe);
+    surface.replaceChildren(safe);
     source.value = html || "";
     scopeEditorImages(surface);
     editor.dataset.sourceAuthoritative = "true";
-    const advanced = hasAdvancedMarkup(source.value, sanitizeEditorHTML(source.value));
     setSourceNotice(editor, advanced);
     surface.hidden = advanced;
     source.hidden = !advanced;
@@ -412,10 +452,15 @@ function setRichEditorHTML(root, html) {
 }
 
 function hasAdvancedMarkup(raw, safe) {
-  const parsed = new DOMParser().parseFromString(raw, "text/html");
-  // This surface lives inside the metadata form. Nested forms cannot survive
-  // browser HTML parsing there; keep their canonical source explicitly editable.
-  return /<!doctype|<html[\s>]|<head[\s>]|<body[\s>]/i.test(raw) || parsed.head.children.length > 0 || !!parsed.body.querySelector("form") || parsed.body.innerHTML !== safe;
+  // Conservative comparison keeps canonical source authoritative. Never parse
+  // unsanitized source again merely to decide which editing mode to display.
+  return /<!doctype|<(?:html|head|body|form)[\s>]/i.test(raw) || String(raw).trim() !== serializeEditorDOM(safe).trim();
+}
+
+function serializeEditorDOM(fragment) {
+  const holder = document.createElement("div");
+  holder.append(fragment.cloneNode(true));
+  return holder.innerHTML;
 }
 
 function setSourceNotice(editor, advanced) {
@@ -467,18 +512,27 @@ function safeEditorURL(value) {
     trimmed.startsWith("tel:");
 }
 
-function sanitizeEditorHTML(value) {
-  const doc = new DOMParser().parseFromString(value, "text/html");
-  doc.querySelectorAll("script,style,link,meta,base,iframe,object,embed,svg,math,template").forEach(el => el.remove());
-  doc.body.querySelectorAll("*").forEach(el => {
+function sanitizeEditorDOM(value) {
+  if (!window.DOMPurify || !DOMPurify.isSupported) throw new Error("Safe editor unavailable. Reload before editing.");
+  // Pinned local sanitizer returns inert HTML nodes. Insert nodes directly;
+  // never reparse DOM text or sanitized strings through innerHTML/DOMParser.
+  const fragment = DOMPurify.sanitize(String(value || ""), {
+    USE_PROFILES: {html:true}, RETURN_DOM_FRAGMENT:true,
+    ADD_ATTR:["target"],
+    FORBID_TAGS:["script","style","link","meta","base","iframe","object","embed","svg","math","template","form","input","textarea","select","option","video","audio","source"],
+    FORBID_ATTR:["srcdoc","style","action","formaction","srcset","autofocus","autoplay","poster","background","ping","lowsrc","dynsrc","archive","codebase","data"],
+  });
+  fragment.querySelectorAll("*").forEach(el => {
     [...el.attributes].forEach(attr => {
       const name = attr.name.toLowerCase();
-      if (name.startsWith("on") || ["srcdoc", "style", "action", "formaction", "srcset"].includes(name) ||
+      if (name.startsWith("on") ||
           (name === "target" && !["_blank", "_self"].includes(attr.value)) ||
-          (["href", "src"].includes(name) && !safeEditorURL(attr.value))) el.removeAttribute(attr.name);
+          (name === "href" && !safeEditorURL(attr.value)) ||
+          (name === "src" && (el.tagName !== "IMG" || !/^\/assets\/[a-zA-Z0-9._/-]+$/.test(attr.value) || attr.value.split("/").some(part => part === "." || part === "..") || !safeEditorURL(attr.value)))) el.removeAttribute(attr.name);
     });
+    if (el.tagName === "A" && el.target === "_blank") el.rel = "noopener noreferrer";
   });
-  return doc.body.innerHTML;
+  return fragment;
 }
 
 function renderPreviewDocument(form) {

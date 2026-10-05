@@ -28,11 +28,21 @@ type Policy struct {
 	RedirectAliases []string `json:"redirect_aliases"`
 	PasswordHash    string   `json:"-"`
 }
+
+// TransportMode describes the deployment's HTTPS boundary, never client input.
+type TransportMode string
+
+const (
+	TransportStrict           TransportMode = "strict"
+	TransportAppPlatformHTTPS TransportMode = "app-platform-https"
+)
+
 type Config struct {
 	AdminHost, PlatformHost string
 	Policies                map[string]Policy
 	Resolve                 func(context.Context, string) (Tenant, bool)
 	TrustedProxies          []netip.Prefix
+	Transport               TransportMode
 }
 type success struct{ until time.Time }
 type attempts struct {
@@ -53,6 +63,16 @@ var hostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$`)
 func New(cfg Config, next http.Handler) (*Gate, error) {
 	if cfg.Resolve == nil || next == nil {
 		return nil, errors.New("host policy requires resolver and handler")
+	}
+	switch cfg.Transport {
+	case "", TransportStrict:
+		cfg.Transport = TransportStrict
+	case TransportAppPlatformHTTPS:
+		if len(cfg.TrustedProxies) != 0 {
+			return nil, errors.New("managed HTTPS cannot be combined with proxy trust")
+		}
+	default:
+		return nil, errors.New("invalid host policy transport mode")
 	}
 	for _, prefix := range cfg.TrustedProxies {
 		if !prefix.IsValid() || prefix.Bits() == 0 {
@@ -167,7 +187,8 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if !g.secure(r) {
+	private.hsts = g.secure(r)
+	if !private.hsts {
 		http.Error(private, "HTTPS required", http.StatusForbidden)
 		return
 	}
@@ -235,6 +256,7 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	safe := r.Clone(r.Context())
 	safe.Header = r.Header.Clone()
 	safe.Header.Del("Authorization")
+	safe.Header.Del("Proxy-Authorization")
 	private.headers()
 	g.next.ServeHTTP(private, safe)
 	if !private.wrote {
@@ -243,10 +265,16 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gate) secure(r *http.Request) bool {
+	if g.cfg.Transport == TransportAppPlatformHTTPS {
+		// App Platform upgrades every external HTTP request before forwarding it
+		// to this HTTP listener. This explicit provider invariant says nothing
+		// about tenant authority: the protected Host still always needs Basic.
+		return true
+	}
 	if r.TLS != nil {
 		return true
 	}
-	if strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))) != "https" {
+	if len(r.Header.Values("X-Forwarded-Proto")) != 1 || strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))) != "https" {
 		return false
 	}
 	remote, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -292,6 +320,7 @@ type privateWriter struct {
 	http.ResponseWriter
 	canonical string
 	wrote     bool
+	hsts      bool
 }
 
 func (w *privateWriter) headers() {
@@ -304,6 +333,9 @@ func (w *privateWriter) headers() {
 		w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"canonical\"", w.canonical))
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if w.hsts {
+		w.Header().Set("Strict-Transport-Security", "max-age=86400")
+	}
 }
 func (w *privateWriter) WriteHeader(status int) {
 	if w.wrote {

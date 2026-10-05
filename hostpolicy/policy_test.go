@@ -169,10 +169,12 @@ func TestAppPlatformModeKeepsAuthenticationIndependentOfForwardingHeaders(t *tes
 			for _, authorized := range []bool{true, false} {
 				r := httptest.NewRequest("GET", "http://REVIEW.test:443"+path, nil)
 				r.RemoteAddr = "198.51.100.99:3333"
-				r.Header.Set("X-Forwarded-Proto", proto)
-				r.Header.Add("X-Forwarded-Proto", "client-second-value")
-				r.Header.Set("X-Forwarded-Host", "primary.test")
-				r.Header.Set("Forwarded", "host=primary.test;proto=https")
+				if proto != "" {
+					r.Header.Set("X-Forwarded-Proto", proto)
+					r.Header.Add("X-Forwarded-Proto", "client-second-value")
+					r.Header.Set("X-Forwarded-Host", "primary.test")
+					r.Header.Set("Forwarded", "host=primary.test;proto=https")
+				}
 				r.Header.Set("Proxy-Authorization", "Basic fixture-proxy-credential")
 				if authorized {
 					r.SetBasicAuth("review", "review-fixture-only")
@@ -200,6 +202,7 @@ func TestAppPlatformModeKeepsAuthenticationIndependentOfForwardingHeaders(t *tes
 	}{
 		{"review.test", "/", "live", "review-fixture-only", 401, ""},
 		{"review.test", "/", "review", "wrong", 401, ""},
+		{"review.test", "/api/v1/ingest/release", "", "", 404, ""},
 		{"unconfigured.test", "/", "review", "review-fixture-only", 503, ""},
 		{"unknown.test", "/", "review", "review-fixture-only", 404, ""},
 		{"platform.test", "/", "review", "review-fixture-only", 404, ""},
@@ -223,6 +226,9 @@ func TestAppPlatformModeKeepsAuthenticationIndependentOfForwardingHeaders(t *tes
 			if w.Header().Get("Strict-Transport-Security") != "" {
 				t.Error("HSTS leaked outside protected host")
 			}
+		}
+		if tc.host == "review.test" && w.Header().Get("Strict-Transport-Security") != "max-age=86400" {
+			t.Error("protected error lost HSTS")
 		}
 	}
 }

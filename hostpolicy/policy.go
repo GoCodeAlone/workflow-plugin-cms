@@ -145,10 +145,6 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	private := &privateWriter{ResponseWriter: w}
-	if r.URL.Path == "/api/v1/ingest/release" {
-		http.NotFound(private, r)
-		return
-	}
 	if host == g.cfg.PlatformHost {
 		if r.URL.Path == "/healthz" && (r.Method == "GET" || r.Method == "HEAD") {
 			private.headers()
@@ -176,18 +172,30 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if host == p.Primary {
+			if r.URL.Path == "/api/v1/ingest/release" {
+				http.NotFound(private, r)
+				return
+			}
 			g.next.ServeHTTP(w, r)
 			return
 		}
 		private.canonical = "https://" + p.Primary + safeTarget(r)
 		for _, alias := range p.RedirectAliases {
 			if host == alias && tenant.Kind != "preview" {
+				if r.URL.Path == "/api/v1/ingest/release" {
+					http.NotFound(private, r)
+					return
+				}
 				http.Redirect(private, r, private.canonical, http.StatusPermanentRedirect)
 				return
 			}
 		}
 	}
 	private.hsts = g.secure(r)
+	if r.URL.Path == "/api/v1/ingest/release" {
+		http.NotFound(private, r)
+		return
+	}
 	if !private.hsts {
 		http.Error(private, "HTTPS required", http.StatusForbidden)
 		return

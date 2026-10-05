@@ -162,3 +162,10 @@ details summary { cursor: pointer; padding: 0.5rem 0; }
   border: 1px solid #ddd;
   background: white;
 }
+
+[data-event-tool] { display:grid; gap:.6rem; padding:1rem; border:1px solid #bbb; }
+[data-event-tool][hidden] { display:none; }
+[data-event-tool] label { display:grid; gap:.2rem; }
+[data-event-tool] input { font:inherit; padding:.5rem; width:100%; }
+button:focus-visible, a:focus-visible { outline:3px solid #154f9d; outline-offset:3px; }
+@media(max-width:640px) { body{padding:.6rem} section{padding:.8rem} form{display:block} form label{display:block;margin:.8rem 0} form .form-row{display:block} table{font-size:.85rem} th,td{padding:.4rem} header{gap:.5rem;flex-wrap:wrap} }

@@ -69,7 +69,7 @@ func TestHandler_ServesJS(t *testing.T) {
 		"renderPreviewDocument",
 		"sourceAuthoritative",
 		"safeEditorURL",
-		`setAttribute("sandbox", "")`,
+		`setAttribute("sandbox", "allow-same-origin")`,
 	} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("js body missing %q", want)

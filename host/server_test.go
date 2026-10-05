@@ -782,7 +782,7 @@ func TestServer_TenantResolver_DeepPreviewRejected(t *testing.T) {
 	}
 }
 
-func TestServer_AdminReload_FlushesCache(t *testing.T) {
+func TestServer_DomainMoveIsVisibleWithoutReload(t *testing.T) {
 	r := &stubResolver{
 		byHost: map[string]TenantInfo{
 			"acme.example": {TenantID: 7, TenantSlug: "acme"},
@@ -790,23 +790,20 @@ func TestServer_AdminReload_FlushesCache(t *testing.T) {
 	}
 	s := New(Config{TenantResolverStore: r})
 
-	// Prime cache.
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Host = "acme.example"
-	s.ServeHTTP(httptest.NewRecorder(), req)
-	if _, ok := s.cached["acme.example"]; !ok {
-		t.Fatal("expected cache to be populated")
+	if tenant, ok := s.ResolveTenant(context.Background(), "acme.example"); !ok || tenant.TenantID != 7 {
+		t.Fatal("initial domain lookup failed")
+	}
+	r.byHost["acme.example"] = TenantInfo{TenantID: 8, TenantSlug: "beta"}
+	if tenant, ok := s.ResolveTenant(context.Background(), "acme.example"); !ok || tenant.TenantID != 8 {
+		t.Fatal("domain reassignment used stale tenant data")
 	}
 
 	// Reload.
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/reload", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/reload", nil)
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reload: %d", rec.Code)
-	}
-	if _, ok := s.cached["acme.example"]; ok {
-		t.Error("expected cache to be cleared after reload")
 	}
 }
 

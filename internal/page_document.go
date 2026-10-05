@@ -34,7 +34,8 @@ func RenderPageDocument(page *store.Page, template PageTemplate, now time.Time) 
 		return body, true, nil
 	}
 	if strings.Contains(template.HTML, cmsBodySlot) {
-		return strings.Replace(template.HTML, cmsBodySlot, body, 1), true, nil
+		shell := strings.ReplaceAll(template.HTML, "<!--cms:title-->", html.EscapeString(page.Title))
+		return strings.Replace(shell, cmsBodySlot, body, 1), true, nil
 	}
 	return template.HTML + body, true, nil
 }

@@ -70,7 +70,7 @@
               <option value="archived">archived</option>
             </select>
           </label>
-          <label>Template <input name="template_id" placeholder="default"></label>
+          <label>Template <input name="template_id" list="page-templates" placeholder="Choose a tenant template"></label>
           <label>Publish at <input name="publish_at" type="datetime-local"></label>
           <label>Unpublish at <input name="unpublish_at" type="datetime-local"></label>
           <div class="form-row full">
@@ -87,7 +87,7 @@
                 <button type="button" data-editor-action="source">HTML</button>
               </div>
               <div class="editor-surface" contenteditable="true" role="textbox" aria-multiline="true" data-editor-surface aria-label="Page body"></div>
-              <textarea name="body_html" rows="12" data-editor-source hidden></textarea>
+              <textarea name="body_html" rows="12" data-editor-source aria-label="Page HTML source" hidden></textarea>
             </div>
           </div>
           <div class="form-actions">
@@ -96,7 +96,7 @@
             <button id="btn-page-editor-close" type="button">Close</button>
           </div>
         </form>
-        <iframe id="page-preview" title="Page preview" hidden></iframe>
+        <p>Preview shows the selected tenant template. Scripts, forms and external media are disabled in this draft preview.</p><iframe id="page-preview" title="Page preview" hidden></iframe>
       </section>
       <details>
         <summary>New page</summary>
@@ -111,7 +111,7 @@
               <option value="archived">archived</option>
             </select>
           </label>
-          <label>Template <input name="template_id" placeholder="default"></label>
+          <label>Template <input name="template_id" list="page-templates" placeholder="Choose a tenant template"></label>
           <label>Publish at <input name="publish_at" type="datetime-local"></label>
           <label>Unpublish at <input name="unpublish_at" type="datetime-local"></label>
           <div class="form-row full">
@@ -128,7 +128,7 @@
                 <button type="button" data-editor-action="source">HTML</button>
               </div>
               <div class="editor-surface" contenteditable="true" role="textbox" aria-multiline="true" data-editor-surface aria-label="New page body"></div>
-              <textarea name="body_html" rows="8" data-editor-source hidden></textarea>
+              <textarea name="body_html" rows="8" data-editor-source aria-label="Page HTML source" hidden></textarea>
             </div>
           </div>
           <button type="submit">Create page</button>
@@ -137,7 +137,9 @@
     </section>
   </main>
 
-  <div id="toast" hidden></div>
+  <datalist id="page-templates"></datalist>
+  <p id="schedule-zone"></p>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
   <script src="admin.js"></script>
 </body>
 </html>

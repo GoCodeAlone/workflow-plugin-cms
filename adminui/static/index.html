@@ -1,80 +1,20 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Multisite Admin</title>
-  <link rel="stylesheet" href="admin.css">
-</head>
-<body>
-  <header>
-    <h1>Multisite Admin</h1>
-    <button id="btn-reload" type="button">Reload tenants cache</button>
-  </header>
-
-  <main>
-    <section id="tenants-section">
-      <h2>Tenants</h2>
-      <table id="tenants-table">
-        <thead><tr><th>ID</th><th>Slug</th><th>Label</th><th>Theme</th><th></th></tr></thead>
-        <tbody id="tenants-body"></tbody>
-      </table>
-
-      <h3>New tenant</h3>
-      <form id="new-tenant-form">
-        <label>Slug <input name="slug" required pattern="[a-z0-9-]+" placeholder="acme"></label>
-        <label>Label <input name="label" required placeholder="Acme Inc"></label>
-        <label>Theme <input name="theme_id" placeholder="default"></label>
-        <button type="submit">Create</button>
-      </form>
-    </section>
-
-    <section id="tenant-detail-section" hidden>
-      <h2>Tenant: <span id="td-slug"></span></h2>
-      <p><button id="btn-back" type="button">← back</button></p>
-
-      <h3>Domains</h3>
-      <table id="domains-table">
-        <thead><tr><th>Host</th><th>Subsite</th><th>Kind</th><th></th></tr></thead>
-        <tbody id="domains-body"></tbody>
-      </table>
-      <form id="new-domain-form">
-        <label>Host <input name="host" required placeholder="acme.example"></label>
-        <label>Subsite <input name="subsite_label" placeholder="(root)"></label>
-        <label>Kind
-          <select name="kind">
-            <option value="vanity">vanity</option>
-            <option value="preview">preview</option>
-            <option value="subdomain">subdomain</option>
-          </select>
-        </label>
-        <button type="submit">Add</button>
-      </form>
-
-      <h3>Pages</h3>
-      <table id="pages-table">
-        <thead><tr><th>ID</th><th>Path</th><th>Title</th><th>Status</th><th></th></tr></thead>
-        <tbody id="pages-body"></tbody>
-      </table>
-      <section id="page-editor-section" class="editor-panel" hidden>
-        <h4>Edit page</h4>
-        <form id="page-editor-form">
-          <input type="hidden" name="id">
-          <label>Path <input name="path" required placeholder="/welcome"></label>
-          <label>Title <input name="title" required placeholder="Welcome"></label>
-          <label>Status
-            <select name="status">
-              <option value="draft">draft</option>
-              <option value="published">published</option>
-              <option value="scheduled">scheduled</option>
-              <option value="archived">archived</option>
-            </select>
-          </label>
-          <label>Template <input name="template_id" list="page-templates" placeholder="Choose a tenant template"></label>
-          <label>Publish at <input name="publish_at" type="datetime-local"></label>
-          <label>Unpublish at <input name="unpublish_at" type="datetime-local"></label>
-          <div class="form-row full">
-            <span>Body</span>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Site editor</title><link rel="stylesheet" href="{{.BasePath}}/admin.css"></head>
+<body data-cms-mode="editor" data-cms-base="{{.BasePath}}">
+<header class="app-header"><div><p class="eyebrow">Content workspace</p><h1>Site editor</h1></div><a data-route="/" href="{{.BasePath}}/">Switch site</a></header>
+<main id="main-content"><section id="tenants-section" class="view"><h2>Your sites</h2><p>Choose a site to edit its pages.</p><div class="table-wrap"><table id="tenants-table"><thead><tr><th>Site</th><th>Identifier</th><th></th></tr></thead><tbody id="tenants-body"></tbody></table></div></section>
+<section id="tenant-detail-section" class="view" hidden><p class="eyebrow" id="td-slug"></p><div class="view-heading"><h2 id="tenant-title">Pages</h2><a id="new-page-link" data-route href="#" hidden>Add page</a></div><p>Open a page to edit its content, appearance or publishing settings.</p><div class="table-wrap"><table id="pages-table"><thead><tr><th>Page</th><th>Path</th><th>Status</th><th></th></tr></thead><tbody id="pages-body"></tbody></table></div></section>
+<section id="page-editor-section" class="view" hidden>
+<div class="editor-heading"><div><p class="eyebrow" id="editor-tenant"></p><h2 id="editor-title">Edit page</h2><p id="save-state" role="status" aria-live="polite">Saved</p></div><div class="form-actions"><button type="submit" form="page-editor-form" id="btn-save-page">Save page</button><a id="pages-link" data-route href="#">All pages</a></div></div>
+<nav id="page-tabs" aria-label="Page views"></nav>
+<form id="page-editor-form" novalidate><input type="hidden" name="id" data-page-field>
+<div data-page-pane="publishing" hidden class="settings-pane"><h3>Page &amp; publishing</h3><p>Save publishes only to this site's configured destinations. Review sites remain isolated from production.</p>
+<label>Title <input name="title" data-page-field required maxlength="250" placeholder="Page title"></label><label>Path <input name="path" data-page-field required pattern="/.*" placeholder="/welcome"></label>
+<label>Status <select name="status" data-page-field><option value="draft">draft</option><option value="published">published</option><option value="scheduled">scheduled</option><option value="archived">archived</option></select></label>
+<label>Publish at <input name="publish_at" data-page-field type="datetime-local"></label><label>Unpublish at <input name="unpublish_at" data-page-field type="datetime-local"></label><p id="schedule-zone"></p></div>
+<div data-page-pane="appearance" hidden class="settings-pane"><h3>Appearance</h3><p>Choose a template from this site's own bundle, then check Preview.</p><label>Template <input name="template_id" data-page-field list="page-templates" placeholder="Choose a tenant template"></label></div>
+<div id="content-pane" data-page-pane="content" hidden><div class="content-layout"><nav id="section-tabs" aria-label="Content sections"></nav><div class="content-editor"><h3 id="section-title">Content</h3>          <div class="form-row full">
+            <span class="sr-only">Body</span>
             <div class="rich-editor" data-rich-editor>
               <div class="editor-toolbar" role="toolbar" aria-label="Page editor tools">
                 <button type="button" data-editor-command="formatBlock" data-editor-value="h2">H2</button>
@@ -90,57 +30,8 @@
               <textarea name="body_html" rows="12" data-editor-source aria-label="Page HTML source" hidden></textarea>
             </div>
           </div>
-          <div class="form-actions">
-            <button type="submit">Save page</button>
-            <button id="btn-page-preview" type="button">Preview</button>
-            <button id="btn-page-editor-close" type="button">Close</button>
-          </div>
-        </form>
-        <p>Preview shows the selected tenant template. Scripts, forms and external media are disabled in this draft preview.</p><iframe id="page-preview" title="Page preview" hidden></iframe>
-      </section>
-      <details>
-        <summary>New page</summary>
-        <form id="new-page-form">
-          <label>Path <input name="path" required placeholder="/welcome"></label>
-          <label>Title <input name="title" required placeholder="Welcome"></label>
-          <label>Status
-            <select name="status">
-              <option value="draft">draft</option>
-              <option value="published">published</option>
-              <option value="scheduled">scheduled</option>
-              <option value="archived">archived</option>
-            </select>
-          </label>
-          <label>Template <input name="template_id" list="page-templates" placeholder="Choose a tenant template"></label>
-          <label>Publish at <input name="publish_at" type="datetime-local"></label>
-          <label>Unpublish at <input name="unpublish_at" type="datetime-local"></label>
-          <div class="form-row full">
-            <span>Body</span>
-            <div class="rich-editor" data-rich-editor>
-              <div class="editor-toolbar" role="toolbar" aria-label="New page editor tools">
-                <button type="button" data-editor-command="formatBlock" data-editor-value="h2">H2</button>
-                <button type="button" data-editor-command="formatBlock" data-editor-value="h3">H3</button>
-                <button type="button" data-editor-command="bold"><strong>B</strong></button>
-                <button type="button" data-editor-command="italic"><em>I</em></button>
-                <button type="button" data-editor-command="insertUnorderedList">List</button>
-                <button type="button" data-editor-command="formatBlock" data-editor-value="blockquote">Quote</button>
-                <button type="button" data-editor-action="link">Link</button>
-                <button type="button" data-editor-action="source">HTML</button>
-              </div>
-              <div class="editor-surface" contenteditable="true" role="textbox" aria-multiline="true" data-editor-surface aria-label="New page body"></div>
-              <textarea name="body_html" rows="8" data-editor-source aria-label="Page HTML source" hidden></textarea>
-            </div>
-          </div>
-          <button type="submit">Create page</button>
-        </form>
-      </details>
-    </section>
-  </main>
-
-  <datalist id="page-templates"></datalist>
-  <p id="schedule-zone"></p>
-  <div id="toast" role="status" aria-live="polite" hidden></div>
-  <script src="purify.min.js"></script>
-  <script src="admin.js"></script>
-</body>
-</html>
+</div></div></div>
+<div data-page-pane="preview" hidden><h3>Page preview</h3><p>Preview uses your current unsaved draft and the selected site template. Scripts, forms and external media are disabled.</p><button id="btn-page-preview" type="button">Refresh preview</button><iframe id="page-preview" title="Page preview" hidden></iframe></div>
+</form><p id="editor-permission-note"></p><button type="button" id="btn-delete-page" class="danger" hidden>Delete page</button>
+</section><section id="route-error" class="view" hidden><h2>View unavailable</h2><p id="route-error-message"></p><p><a id="route-content" data-route href="#" hidden>Open Content</a></p><a data-route="/" href="{{.BasePath}}/">Return to your sites</a></section></main>
+<datalist id="page-templates"></datalist><style id="section-view-style"></style><div id="toast" role="status" aria-live="polite" hidden></div><script src="{{.BasePath}}/purify.min.js"></script><script src="{{.BasePath}}/admin.js"></script></body></html>

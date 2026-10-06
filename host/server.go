@@ -60,6 +60,9 @@ type Config struct {
 	// AdminTenantAccess adds membership enforcement after role authorization.
 	// Hosts with tenant editors must supply it; nil preserves legacy operator-only wiring.
 	AdminTenantAccess func(*http.Request, int64) bool
+	// AdminPlatformAccess is mandatory for tenant creation, domain reads/writes
+	// and global cache reload. Hosts must enforce durable platform authority.
+	AdminPlatformAccess func(*http.Request) bool
 
 	// OnIngest is called with the verified payload. Production wires
 	// this to a Fetcher; tests typically pass a no-op.
@@ -146,6 +149,8 @@ func New(cfg Config) *Server {
 	api.PreviewBase = cfg.PreviewSubdomainBase
 	api.ReloadFunc = s.flushCaches
 	api.TenantAccess = cfg.AdminTenantAccess
+	api.PlatformAccess = cfg.AdminPlatformAccess
+	api.RequestAccess = cfg.AdminAuth
 	api.ResolveTemplate = s.resolveTenantTemplate
 	api.ListTemplates = s.listTenantTemplates
 	s.admin = api

@@ -13,7 +13,7 @@ func TestHandler_ServesPinnedSanitizerBeforeEditor(t *testing.T) {
 	h := http.StripPrefix("/admin", Handler())
 	index := httptest.NewRecorder()
 	h.ServeHTTP(index, httptest.NewRequest("GET", "/admin/", nil))
-	if sanitizer, editor := strings.Index(index.Body.String(), `src="purify.min.js"`), strings.Index(index.Body.String(), `src="admin.js"`); sanitizer < 0 || editor <= sanitizer {
+	if sanitizer, editor := strings.Index(index.Body.String(), `src="/admin/purify.min.js"`), strings.Index(index.Body.String(), `src="/admin/admin.js"`); sanitizer < 0 || editor <= sanitizer {
 		t.Fatal("sanitizer must load locally before editor")
 	}
 	r := httptest.NewRecorder()
@@ -34,7 +34,7 @@ func TestHandler_ServesIndex(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("index: %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "Multisite Admin") {
+	if !strings.Contains(rec.Body.String(), "Site editor") {
 		t.Errorf("body did not contain title; got prefix %q", rec.Body.String()[:120])
 	}
 	body := rec.Body.String()

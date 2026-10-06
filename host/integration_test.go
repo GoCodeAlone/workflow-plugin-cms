@@ -52,6 +52,7 @@ func TestIntegration_FullMatrix(t *testing.T) {
 	}
 
 	srv := New(Config{
+		AdminPlatformAccess:  func(*http.Request) bool { return true }, // trusted synthetic fixture
 		PreviewSubdomainBase: "preview.test",
 		TenantResolverStore:  resolver,
 		MediaBackend:         &media.LocalFS{Root: dir, PublicURL: "https://media.test"},

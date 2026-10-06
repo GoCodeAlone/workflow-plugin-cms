@@ -33,13 +33,19 @@ import (
 // `<slug>.<preview_base>` domain row (V18 / T32). Empty disables
 // auto-provision.
 type AdminAPI struct {
-	tenants         store.TenantAdminStore
-	pages           store.PageStore
-	ReloadFunc      func() error
-	PreviewBase     string
-	Audit           *audit.Logger
-	AuditActor      func(*http.Request) string
-	TenantAccess    func(*http.Request, int64) bool
+	tenants      store.TenantAdminStore
+	pages        store.PageStore
+	ReloadFunc   func() error
+	PreviewBase  string
+	Audit        *audit.Logger
+	AuditActor   func(*http.Request) string
+	TenantAccess func(*http.Request, int64) bool
+	// PlatformAccess must authorize current platform authority, including reads.
+	// Missing configuration fails closed for global and domain administration.
+	PlatformAccess func(*http.Request) bool
+	// RequestAccess projects page permissions without dispatching a write and
+	// repeats the host's authorization inside this handler when configured.
+	RequestAccess   func(*http.Request) bool
 	ResolveTemplate func(context.Context, int64, string) (PageTemplate, error)
 	ListTemplates   func(context.Context, int64) ([]string, error)
 }
@@ -56,6 +62,15 @@ func (a *AdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	route, tid, rid := parseAdminRoute(r.URL.Path)
 	if route == "" {
 		writeJSONError(w, 404, "not_found", "route not found")
+		return
+	}
+	platform := route == "/reload" || (route == "/tenants" && r.Method != http.MethodGet) || strings.HasPrefix(route, "/domains")
+	if platform && (a.PlatformAccess == nil || !a.PlatformAccess(r)) {
+		writeJSONError(w, 403, "forbidden", "platform access denied")
+		return
+	}
+	if a.RequestAccess != nil && !a.RequestAccess(r) {
+		writeJSONError(w, 403, "forbidden", "request access denied")
 		return
 	}
 	if tid > 0 && a.TenantAccess != nil && !a.TenantAccess(r, tid) {
@@ -89,6 +104,8 @@ func (a *AdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.previewPage(w, r, tid)
 	case route == "/pages/templates" && r.Method == "GET":
 		a.pageTemplates(w, r, tid)
+	case route == "/pages/permissions" && r.Method == "GET":
+		a.pagePermissions(w, r, tid)
 	case route == "/overlays/clone" && r.Method == "POST":
 		a.cloneOverlay(w, r, tid)
 	case route == "/overlays/publish" && r.Method == "PUT":
@@ -132,7 +149,7 @@ func parseAdminRoute(path string) (route string, tid, rid int64) {
 	}
 	route = "/" + parts[2] + "/" + parts[3]
 	switch route {
-	case "/pages/preview", "/pages/templates", "/overlays/clone", "/overlays/publish", "/overlays/disable", "/nav/published", "/widgets/render", "/media/validate":
+	case "/pages/preview", "/pages/templates", "/pages/permissions", "/overlays/clone", "/overlays/publish", "/overlays/disable", "/nav/published", "/widgets/render", "/media/validate":
 		return route, tid, 0
 	}
 	if parts[2] != "pages" && parts[2] != "domains" {
@@ -143,6 +160,43 @@ func parseAdminRoute(path string) (route string, tid, rid int64) {
 		return "", 0, 0
 	}
 	return "/" + parts[2] + "/id", tid, rid
+}
+
+// pagePermissions invokes the same callbacks as writes, but never dispatches
+// them. A page ID affects the probe target only; it grants no authority.
+func (a *AdminAPI) pagePermissions(w http.ResponseWriter, r *http.Request, tid int64) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	if a.RequestAccess == nil || a.TenantAccess == nil {
+		writeJSONError(w, 503, "unavailable", "permission projection not configured")
+		return
+	}
+	pid := int64(0)
+	if values, present := r.URL.Query()["page_id"]; present {
+		if len(values) != 1 {
+			writeJSONError(w, 400, "bad_request", "canonical page_id required")
+			return
+		}
+		var err error
+		pid, err = strconv.ParseInt(values[0], 10, 64)
+		if err != nil || pid <= 0 || strconv.FormatInt(pid, 10) != values[0] {
+			writeJSONError(w, 400, "bad_request", "canonical page_id required")
+			return
+		}
+	}
+	base := "/api/v1/admin/tenants/" + strconv.FormatInt(tid, 10) + "/pages"
+	probe := func(method, path string) bool {
+		p := r.Clone(r.Context())
+		u := *r.URL
+		u.Path, u.RawPath, u.RawQuery = path, "", ""
+		p.URL, p.Method, p.RequestURI, p.Body, p.ContentLength = &u, method, "", http.NoBody, 0
+		return a.RequestAccess(p) && a.TenantAccess(p, tid)
+	}
+	edit, remove := false, false
+	if pid > 0 {
+		path := base + "/" + strconv.FormatInt(pid, 10)
+		edit, remove = probe(http.MethodPut, path), probe(http.MethodDelete, path)
+	}
+	writeJSON(w, 200, map[string]bool{"create": probe(http.MethodPost, base), "edit": edit, "delete": remove})
 }
 
 // --- Reload handler -----------------------------------------------------

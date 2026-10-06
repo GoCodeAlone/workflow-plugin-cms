@@ -48,16 +48,47 @@ until mirrored into site-owned storage.
 
 The `cms.engine` module exposes the strict service method
 `CMSEngine.AdminContribution`. Hosts such as `gocodealone-multisite` can call it
-to register the CMS site manager inside the extensible admin shell.
+to register the site editor inside the extensible admin shell. Site content and
+platform administration use separate documents and mounts:
+
+```go
+editor := adminui.HandlerWithOptions(adminui.Options{
+    Mode: adminui.Editor, BasePath: "/admin/cms/sites",
+})
+platform := adminui.HandlerWithOptions(adminui.Options{
+    Mode: adminui.Platform, BasePath: "/admin/cms/platform",
+})
+```
+
+`adminui.Handler()` defaults to the editor at `/admin`. Protect every editor
+request with the host's current identity and tenant membership, and every
+platform request with current platform authority. The handlers only render UI;
+they do not replace authorization. `host.Config.AdminPlatformAccess` is required
+for tenant mutations, domain reads/writes and global cache reload. Those API
+operations fail closed when the callback is absent, including when `AdminAPI`
+is called directly. `AdminAuth` and `AdminTenantAccess` remain required for the
+private page permission projection at
+`GET /api/v1/admin/tenants/:tid/pages/permissions[?page_id=:pid]`. This endpoint
+probes the configured callbacks without dispatching writes and returns create,
+edit and delete capabilities for the specific tenant/page. UI visibility follows
+that projection; write handlers still enforce authorization independently.
+
+Each page has Content, Appearance, Publishing, HTML and Preview routes. Content
+routes select one top-level body section; plain top-level text uses a whole-body
+fallback. Section switching preserves the canonical body. The editor warns
+before leaving an unsaved page and freezes the captured draft during Save.
+Platform tenant/domain/cache controls are absent from the editor document.
 
 The contribution requires the multisite admin scopes:
 
 - `admin:multisite.sites:read`
-- `admin:multisite.sites:update`
 - `admin:multisite.pages:read`
 - `admin:multisite.pages:update`
 - `admin:multisite.publish:update`
-- `admin:multisite.onboarding:plan`
+
+Platform contributions belong to the host and require its platform-specific
+permission plus current platform authority. The CMS content contribution no
+longer advertises tenant creation, domain controls or onboarding operations.
 
 API route metadata is returned only when the caller passes `authorized: true`.
 That keeps route discovery behind the host's authz check while preserving the

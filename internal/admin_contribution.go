@@ -18,23 +18,20 @@ type AdminContribution struct {
 func CMSAdminContribution() AdminContribution {
 	return AdminContribution{
 		ID:         "cms-site-manager",
-		Title:      "Sites",
+		Title:      "Site editor",
 		Category:   "content",
 		Path:       "/admin/cms/sites",
 		RenderMode: "iframe",
 		AppContext: "multisite",
 		Permissions: []string{
 			"admin:multisite.sites:read",
-			"admin:multisite.sites:update",
 			"admin:multisite.pages:read",
 			"admin:multisite.pages:update",
 			"admin:multisite.publish:update",
-			"admin:multisite.onboarding:plan",
 		},
 		Metadata: CMSAdminContributionMetadata(true),
 		Actions: []string{
 			"site.list",
-			"domain.list",
 			"page.list",
 			"template.list",
 			"overlay.list",
@@ -51,7 +48,6 @@ func CMSAdminContributionMetadata(authorized bool) map[string]string {
 	}
 	return map[string]string{
 		"sites_path":       "/api/v1/admin/tenants",
-		"domains_path":     "/api/v1/admin/tenants/{tenant_id}/domains",
 		"pages_path":       "/api/v1/admin/tenants/{tenant_id}/pages",
 		"templates_path":   "/api/v1/admin/tenants/{tenant_id}/templates",
 		"overlays_path":    "/api/v1/admin/tenants/{tenant_id}/overlays",

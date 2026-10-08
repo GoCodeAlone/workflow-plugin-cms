@@ -245,6 +245,9 @@ func (s *Store) Create(ctx context.Context, tenantID int64, p *store.Page) error
 	if err = createPage(ctx, tx, tenantID, p); err != nil {
 		return err
 	}
+	if _, err = advanceRevision(ctx, tx, tenantID); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -315,6 +318,9 @@ func (s *Store) Update(ctx context.Context, tenantID int64, p *store.Page) error
 	if err = updatePage(ctx, tx, tenantID, p); err != nil {
 		return err
 	}
+	if _, err = advanceRevision(ctx, tx, tenantID); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -358,6 +364,9 @@ func (s *Store) Delete(ctx context.Context, tenantID int64, id int64, expectedVe
 	}
 	defer tx.Rollback(ctx)
 	if err = deletePage(ctx, tx, tenantID, id, expectedVersion); err != nil {
+		return err
+	}
+	if _, err = advanceRevision(ctx, tx, tenantID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

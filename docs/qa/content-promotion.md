@@ -19,6 +19,9 @@ each schema is cleaned by its test. No runtime tables, processes or ports change
 | Batch → real Postgres → reload | Update/create/delete persist atomically; mapping names target identities; complete page baseline checked |
 | Ordinary save/delete → batch | Stale loaded versions conflict; racing save/promotion and delete/promotion each admit one winner |
 | Database failure mid-batch | Isolated trigger refuses the second item; earlier update rolls back and complete baseline remains unchanged |
+| Durable revision → rollback replay | Deleted/restore/edit/delete ABA and create/delete history refuse replay; fresh Postgres connections retain the guard |
+| Path moves → Postgres | Occupied legacy staging paths do not block title-only updates; two-page path swap persists |
+| Canonical blocks → references | Internal/relative/anchor/mail/HTTPS links export through the actual renderer; arbitrary slash text is preserved; absolute/encoded admin/API/media references refuse |
 | Receipt → rollback | Content restored with increasing versions; created page removed; deleted page restored; later edit refuses whole rollback |
 | Bundle → validator | Changed bytes, missing assets, static homepage shadow, symlink, admin reference and encoded tenant-upload references refused |
 | Actual Chrome editor → API → Postgres | Repeated saves send versions 1/2; fixture promotion changes version to 4; stale save/delete send 3 and return 409; unsaved draft retained; reload then version-4 save persists as version 5; wrong tenant returns 403 |
@@ -30,7 +33,9 @@ The task evidence directory retains the browser conflict screenshot and test log
 
 ## Release limits
 
-`PageStore.Delete` now requires expected version; external API clients must send
+The explicit durable-revision SQL migration and a fenced rollout replacing every
+older writer are mandatory new host schema prerequisites. No automatic migration
+or host schema deployment occurred. `PageStore.Delete` now requires expected version; external API clients must send
 `expected_version` for PUT/DELETE. The CMS host must consume this change in a
 separate reviewed release. The historical PR31 worktree and current consumer
 pin are preserved. Independent review and exact committed-head CI are recorded

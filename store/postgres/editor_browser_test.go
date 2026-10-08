@@ -46,7 +46,7 @@ func TestPostgresEditorVersionBrowser(t *testing.T) {
 			w.WriteHeader(405)
 			return
 		}
-		all, err := s.List(r.Context(), tenant.ID, "")
+		state, err := s.ReadPageState(r.Context(), tenant.ID)
 		if err != nil {
 			w.WriteHeader(500)
 			return
@@ -58,7 +58,7 @@ func TestPostgresEditorVersionBrowser(t *testing.T) {
 		}
 		content := store.ContentOf(current)
 		content.Title = "Approved fixture promotion"
-		_, err = s.ApplyPageBatch(r.Context(), tenant.ID, store.PageBatch{Baseline: store.Baseline(store.States(all)), Mutations: []store.PageMutation{{Key: "approved-fixture", Kind: "update", TargetID: p.ID, ExpectedVersion: current.Version, Content: &content}}})
+		_, err = s.ApplyPageBatch(r.Context(), tenant.ID, store.PageBatch{TargetScope: state.Scope, BaselineRevision: state.Revision, Baseline: store.Baseline(state.Pages), Mutations: []store.PageMutation{{Key: "approved-fixture", Kind: "update", TargetID: p.ID, ExpectedVersion: current.Version, Content: &content}}})
 		if err != nil {
 			w.WriteHeader(500)
 			return

@@ -5,6 +5,7 @@ package storetest
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
@@ -15,7 +16,7 @@ type BatchStore interface {
 	store.PageBatchStore
 }
 
-func PageBatches(t *testing.T, s BatchStore, targetTenant, sourceTenant int64) {
+func PageBatches(t *testing.T, s BatchStore, targetTenant, sourceTenant int64) store.PageBatchReceipt {
 	t.Helper()
 	ctx := context.Background()
 	create := func(tenant int64, path, title string) *store.Page {
@@ -32,14 +33,14 @@ func PageBatches(t *testing.T, s BatchStore, targetTenant, sourceTenant int64) {
 	if review.ID == home.ID {
 		t.Fatal("source and target must differ")
 	}
-	all, err := s.List(ctx, targetTenant, "")
+
+	state, err := s.ReadPageState(ctx, targetTenant)
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseline := store.Baseline(store.States(all))
 	content := store.ContentOf(review)
 	news := store.PageContent{Path: "/news", Title: "New page", BodyHTML: "<p>News</p>", Status: store.StatusPublished}
-	batch := store.PageBatch{Baseline: baseline, Mutations: []store.PageMutation{{Key: "review:home", Kind: "update", TargetID: home.ID, ExpectedVersion: home.Version, Content: &content}, {Key: "review:news", Kind: "create", Content: &news}, {Key: "explicit:remove", Kind: "delete", TargetID: removed.ID, ExpectedVersion: removed.Version}}}
+	batch := store.PageBatch{TargetScope: state.Scope, BaselineRevision: state.Revision, Baseline: store.Baseline(state.Pages), Mutations: []store.PageMutation{{Key: "review:home", Kind: "update", TargetID: home.ID, ExpectedVersion: home.Version, Content: &content}, {Key: "review:news", Kind: "create", Content: &news}, {Key: "explicit:remove", Kind: "delete", TargetID: removed.ID, ExpectedVersion: removed.Version}}}
 	bad := batch
 	bad.Mutations = append([]store.PageMutation(nil), batch.Mutations...)
 	invalid := news
@@ -93,8 +94,13 @@ func PageBatches(t *testing.T, s BatchStore, targetTenant, sourceTenant int64) {
 	if _, err := s.Get(ctx, targetTenant, receipt.Mapping["review:news"]); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("created page survived rollback")
 	}
-	all, _ = s.List(ctx, targetTenant, "")
-	batch.Baseline = store.Baseline(store.States(all))
+
+	state, err = s.ReadPageState(ctx, targetTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch.Baseline = store.Baseline(state.Pages)
+	batch.BaselineRevision = state.Revision
 	batch.Mutations[0].ExpectedVersion = rolled.Version
 	batch.Mutations[2].ExpectedVersion = restored.Version
 	receipt, err = s.ApplyPageBatch(ctx, targetTenant, batch)
@@ -114,10 +120,14 @@ func PageBatches(t *testing.T, s BatchStore, targetTenant, sourceTenant int64) {
 	}
 	// Simultaneous save/promotion: only one may use the same loaded version.
 	fresh, _ := s.Get(ctx, targetTenant, home.ID)
-	all, _ = s.List(ctx, targetTenant, "")
+
+	state, err = s.ReadPageState(ctx, targetTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
 	next := store.ContentOf(fresh)
 	next.Title = "Promotion race winner"
-	raceBatch := store.PageBatch{Baseline: store.Baseline(store.States(all)), Mutations: []store.PageMutation{{Key: "race", Kind: "update", TargetID: fresh.ID, ExpectedVersion: fresh.Version, Content: &next}}}
+	raceBatch := store.PageBatch{TargetScope: state.Scope, BaselineRevision: state.Revision, Baseline: store.Baseline(state.Pages), Mutations: []store.PageMutation{{Key: "race", Kind: "update", TargetID: fresh.ID, ExpectedVersion: fresh.Version, Content: &next}}}
 	fresh.Title = "Editor race winner"
 	start := make(chan struct{})
 	results := make(chan error, 2)
@@ -141,10 +151,14 @@ func PageBatches(t *testing.T, s BatchStore, targetTenant, sourceTenant int64) {
 	}
 	// A delete loaded before promotion also competes on the same version.
 	fresh, _ = s.Get(ctx, targetTenant, home.ID)
-	all, _ = s.List(ctx, targetTenant, "")
+
+	state, err = s.ReadPageState(ctx, targetTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
 	next = store.ContentOf(fresh)
 	next.Title = "Delete race promotion"
-	raceBatch = store.PageBatch{Baseline: store.Baseline(store.States(all)), Mutations: []store.PageMutation{{Key: "delete-race", Kind: "update", TargetID: fresh.ID, ExpectedVersion: fresh.Version, Content: &next}}}
+	raceBatch = store.PageBatch{TargetScope: state.Scope, BaselineRevision: state.Revision, Baseline: store.Baseline(state.Pages), Mutations: []store.PageMutation{{Key: "delete-race", Kind: "update", TargetID: fresh.ID, ExpectedVersion: fresh.Version, Content: &next}}}
 	start = make(chan struct{})
 	go func() { <-start; results <- s.Delete(ctx, targetTenant, fresh.ID, fresh.Version) }()
 	go func() { <-start; _, err := s.ApplyPageBatch(ctx, targetTenant, raceBatch); results <- err }()
@@ -187,4 +201,71 @@ func PageBatches(t *testing.T, s BatchStore, targetTenant, sourceTenant int64) {
 	if wins != 1 || conflicts != 1 {
 		t.Fatal("duplicate racing create accepted")
 	}
+	// Occupied legacy staging names must not block unchanged-path updates.
+	kept, _ = s.Get(ctx, targetTenant, keep.ID)
+	occupied := create(targetTenant, "/__cms_batch_internal__/"+strconv.FormatInt(kept.ID, 10), "Omitted staging path")
+	state, err = s.ReadPageState(ctx, targetTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	titleOnly := store.ContentOf(kept)
+	titleOnly.Title = "Title-only promotion"
+	if _, err := s.ApplyPageBatch(ctx, targetTenant, store.BatchFor(state, []store.PageMutation{{Key: "title-only", Kind: "update", TargetID: kept.ID, ExpectedVersion: kept.Version, Content: &titleOnly}})); err != nil {
+		t.Fatalf("occupied staging path blocked title update: %v", err)
+	}
+	still, _ := s.Get(ctx, targetTenant, occupied.ID)
+	if still.Title != occupied.Title {
+		t.Fatal("omitted staging path changed")
+	}
+	a, b := create(targetTenant, "/swap-a", "Swap A"), create(targetTenant, "/swap-b", "Swap B")
+	state, _ = s.ReadPageState(ctx, targetTenant)
+	ca, cb := store.ContentOf(a), store.ContentOf(b)
+	ca.Path, cb.Path = b.Path, a.Path
+	if _, err := s.ApplyPageBatch(ctx, targetTenant, store.BatchFor(state, []store.PageMutation{{Key: "swap-a", Kind: "update", TargetID: a.ID, ExpectedVersion: a.Version, Content: &ca}, {Key: "swap-b", Kind: "update", TargetID: b.ID, ExpectedVersion: b.Version, Content: &cb}})); err != nil {
+		t.Fatalf("atomic path swap failed: %v", err)
+	}
+	afterA, _ := s.Get(ctx, targetTenant, a.ID)
+	afterB, _ := s.Get(ctx, targetTenant, b.ID)
+	if afterA.Path != b.Path || afterB.Path != a.Path {
+		t.Fatal("path swap not persisted")
+	}
+	// Deletion ABA: an old empty post-state can recur after newer mutations.
+	state, _ = s.ReadPageState(ctx, sourceTenant)
+	review, _ = s.Get(ctx, sourceTenant, review.ID)
+	deleted, err := s.ApplyPageBatch(ctx, sourceTenant, store.BatchFor(state, []store.PageMutation{{Key: "aba-delete", Kind: "delete", TargetID: review.ID, ExpectedVersion: review.Version}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RollbackPageBatch(ctx, sourceTenant, deleted); err != nil {
+		t.Fatal(err)
+	}
+	oldEditor, _ := s.Get(ctx, sourceTenant, review.ID)
+	fresh, _ = s.Get(ctx, sourceTenant, review.ID)
+	fresh.Title = "Intervening edit"
+	if s.Update(ctx, sourceTenant, fresh) != nil || s.Delete(ctx, sourceTenant, fresh.ID, fresh.Version) != nil {
+		t.Fatal("ABA edit/delete fixture failed")
+	}
+	if _, err := s.RollbackPageBatch(ctx, sourceTenant, deleted); !errors.Is(err, store.ErrVersionConflict) {
+		t.Fatal("old deletion receipt replay accepted changed-then-empty state")
+	}
+	if err := s.Update(ctx, sourceTenant, oldEditor); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("stale pre-delete editor resurrected")
+	}
+	newPage := create(sourceTenant, "/aba-new", "New deletion")
+	state, _ = s.ReadPageState(ctx, sourceTenant)
+	deleted, err = s.ApplyPageBatch(ctx, sourceTenant, store.BatchFor(state, []store.PageMutation{{Key: "aba-new-delete", Kind: "delete", TargetID: newPage.ID, ExpectedVersion: newPage.Version}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporary := create(sourceTenant, "/temporary", "Created and deleted")
+	if s.Delete(ctx, sourceTenant, temporary.ID, temporary.Version) != nil {
+		t.Fatal("create/delete fixture failed")
+	}
+	if _, err := s.RollbackPageBatch(ctx, sourceTenant, deleted); !errors.Is(err, store.ErrVersionConflict) {
+		t.Fatal("create/delete history disappeared from rollback guard")
+	}
+	if _, err := s.RollbackPageBatch(ctx, targetTenant, deleted); !errors.Is(err, store.ErrVersionConflict) {
+		t.Fatal("receipt target content scope not bound")
+	}
+	return deleted
 }

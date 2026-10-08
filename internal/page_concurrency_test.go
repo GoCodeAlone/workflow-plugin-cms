@@ -27,8 +27,8 @@ func TestAdminPageSaveDeleteClientPreconditions(t *testing.T) {
 	}
 	content := store.ContentOf(p)
 	content.Title = "Approved promotion"
-	all, _ := pages.List(context.Background(), 1, "")
-	_, err := pages.ApplyPageBatch(context.Background(), 1, store.PageBatch{Baseline: store.Baseline(store.States(all)), Mutations: []store.PageMutation{{Key: "approved", Kind: "update", TargetID: p.ID, ExpectedVersion: p.Version, Content: &content}}})
+	state, _ := pages.ReadPageState(context.Background(), 1)
+	_, err := pages.ApplyPageBatch(context.Background(), 1, store.PageBatch{TargetScope: state.Scope, BaselineRevision: state.Revision, Baseline: store.Baseline(state.Pages), Mutations: []store.PageMutation{{Key: "approved", Kind: "update", TargetID: p.ID, ExpectedVersion: p.Version, Content: &content}}})
 	if err != nil {
 		t.Fatal(err)
 	}

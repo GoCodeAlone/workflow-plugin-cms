@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	cms "github.com/GoCodeAlone/workflow-plugin-cms/internal"
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
 	"golang.org/x/net/html"
 )
@@ -147,6 +148,16 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		if err != nil || u.User != nil {
 			return ErrBundle
 		}
+		if strings.ContainsAny(u.Path, "\\\x00") {
+			return ErrBundle
+		}
+		resolved := path.Clean(u.Path)
+		if u.Scheme == "" && !strings.HasPrefix(u.Path, "/") {
+			resolved = path.Join(path.Dir(base), u.Path)
+		}
+		if forbiddenPath(resolved) {
+			return ErrBundle
+		}
 		if u.Scheme != "" {
 			if link && (u.Scheme == "mailto" || u.Scheme == "tel") {
 				return nil
@@ -154,22 +165,9 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 			if u.Scheme != "https" || u.Host == "" || strings.Contains(strings.ToLower(u.Hostname()), "preview.") || strings.Contains(strings.ToLower(u.Hostname()), "-review.") {
 				return ErrBundle
 			}
-			if strings.HasPrefix(u.Path, "/media/") {
-				return ErrBundle
-			}
 			return nil
 		}
 		if u.Host != "" {
-			return ErrBundle
-		}
-		if strings.Contains(u.Path, "\\") || strings.Contains(u.Path, "\x00") {
-			return ErrBundle
-		}
-		resolved := path.Clean(u.Path)
-		if !strings.HasPrefix(u.Path, "/") {
-			resolved = path.Join(path.Dir(base), u.Path)
-		}
-		if strings.HasPrefix(resolved, "/media/") || strings.HasPrefix(resolved, "/api/") || strings.HasPrefix(resolved, "/admin") || strings.HasPrefix(resolved, "/cms/") {
 			return ErrBundle
 		}
 		if files[resolved] || link && routes[resolved] {
@@ -240,6 +238,13 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		return visit(doc)
 	}
 	for _, p := range pages {
+		canonical, err := cms.RenderPageBody(p.Page(1, 1, 1))
+		if err != nil {
+			return ErrBundle
+		}
+		if err = checkHTML(canonical, p.Path); err != nil {
+			return err
+		}
 		if len(p.BodyBlocks) > 0 {
 			var blocks any
 			if json.Unmarshal(p.BodyBlocks, &blocks) != nil {
@@ -248,16 +253,6 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 			var checkBlock func(any) error
 			checkBlock = func(value any) error {
 				switch v := value.(type) {
-				case string:
-					if strings.Contains(v, "/media/") {
-						return ErrBundle
-					}
-					if strings.HasPrefix(v, "/") || strings.HasPrefix(v, "https:") {
-						return checkRef(v, p.Path, false)
-					}
-					if strings.Contains(v, "<") {
-						return checkHTML(v, p.Path)
-					}
 				case []any:
 					for _, item := range v {
 						if err := checkBlock(item); err != nil {
@@ -265,7 +260,16 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 						}
 					}
 				case map[string]any:
-					for _, item := range v {
+					for key, item := range v {
+						if ref, ok := item.(string); ok {
+							switch key {
+							case "href", "src", "url", "poster":
+								if err := checkRef(ref, p.Path, key == "href"); err != nil {
+									return err
+								}
+							}
+						}
+
 						if err := checkBlock(item); err != nil {
 							return err
 						}
@@ -311,4 +315,13 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		}
 	}
 	return nil
+}
+
+func forbiddenPath(p string) bool {
+	for _, prefix := range []string{"/media", "/api", "/admin", "/cms"} {
+		if p == prefix || strings.HasPrefix(p, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }

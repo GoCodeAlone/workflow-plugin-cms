@@ -68,7 +68,7 @@ func TestSnapshotFreezeExplicitMappingAndDryRun(t *testing.T) {
 	if err := pages.Create(context.Background(), 20, keep); err != nil {
 		t.Fatal(err)
 	}
-	current, _ := pages.List(context.Background(), 20, "")
+	current, _ := pages.ReadPageState(context.Background(), 20)
 	mappings, err := SuggestedMapping(s, current)
 	if err != nil || mappings[0].TargetID != target.ID || target.ID == s.Pages[0].SourceID {
 		t.Fatal("path suggestion/mapping failed")
@@ -139,6 +139,13 @@ func TestBundleHashesReferencesStaticCollisionsAndSymlinks(t *testing.T) {
 			t.Fatal("unsupported reference accepted")
 		}
 	}
+	for _, ref := range []string{"https://admin.gocodealone.tech/api/v1/admin/tenants/10/pages", "https://example.com/admin", "https://example.com/cms/templates/main.html", "https://example.com/%61pi/private", "https://example.com/assets/../api/private", "https://example.com/assets/%2e%2e/media/10/hash.jpg"} {
+		p := contents[0]
+		p.BodyHTML = `<a href="` + ref + `">Private dependency</a>`
+		if VerifyBundle(root, manifest, []store.PageContent{p}) != ErrBundle {
+			t.Fatal("absolute private path accepted")
+		}
+	}
 	p := contents[0]
 	p.BodyBlocks = json.RawMessage(`{"type":"doc","url":"\u002fmedia/10/hash.jpg"}`)
 	if VerifyBundle(root, manifest, []store.PageContent{p}) != ErrBundle {
@@ -159,5 +166,34 @@ func TestBundleHashesReferencesStaticCollisionsAndSymlinks(t *testing.T) {
 	}
 	if _, err := InventoryBundle(root); err != ErrBundle {
 		t.Fatal("bundle symlink accepted")
+	}
+}
+
+func TestCanonicalBlockLinksUseActualRendererSemantics(t *testing.T) {
+	s, root, pages, home := fixture(t)
+	teaching := &store.Page{Path: "/teaching", Title: "Teaching", Status: store.StatusDraft, TemplateID: "main"}
+	if pages.Create(context.Background(), 10, teaching) != nil {
+		t.Fatal("teaching fixture failed")
+	}
+	links := []any{}
+	for _, href := range []string{"/teaching", "teaching", "#voice", "mailto:tina@example.com", "https://example.com/music"} {
+		links = append(links, map[string]any{"type": "link", "attrs": map[string]any{"href": href}, "content": []any{map[string]any{"type": "text", "text": "Navigation"}}})
+	}
+	links = append(links, map[string]any{"type": "text", "text": "/this is ordinary text, not an asset"})
+	home.BodyBlocks, _ = json.Marshal(map[string]any{"type": "doc", "content": links})
+	if pages.Update(context.Background(), 10, home) != nil {
+		t.Fatal("blocks update failed")
+	}
+	if _, err := Export(context.Background(), pages, 10, "test-review", []int64{home.ID, teaching.ID}, root, s.CreatedAt); err != nil {
+		t.Fatalf("canonical link export refused: %v", err)
+	}
+	for _, href := range []string{"/media/10/hash.jpg", "https://admin.gocodealone.tech/api/private", "javascript:alert(1)"} {
+		home.BodyBlocks, _ = json.Marshal(map[string]any{"type": "doc", "content": []any{map[string]any{"type": "link", "attrs": map[string]any{"href": href}}}})
+		if pages.Update(context.Background(), 10, home) != nil {
+			t.Fatal("unsafe fixture failed")
+		}
+		if _, err := Export(context.Background(), pages, 10, "test-review", []int64{home.ID, teaching.ID}, root, s.CreatedAt); err != ErrBundle {
+			t.Fatal("canonical private reference accepted")
+		}
 	}
 }

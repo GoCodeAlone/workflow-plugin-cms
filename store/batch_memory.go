@@ -15,6 +15,15 @@ func (s *MemoryPageStore) statesLocked(tenantID int64) []PageState {
 	return States(pages)
 }
 
+func (s *MemoryPageStore) ReadPageState(_ context.Context, tenantID int64) (PageSet, error) {
+	if tenantID <= 0 {
+		return PageSet{}, ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return PageSet{Scope: s.scopeLocked(tenantID), Revision: s.revisions[tenantID], Pages: s.statesLocked(tenantID)}, nil
+}
+
 func (s *MemoryPageStore) ApplyPageBatch(_ context.Context, tenantID int64, batch PageBatch) (PageBatchReceipt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -36,10 +45,11 @@ func (s *MemoryPageStore) applyBatchLocked(tenantID int64, batch PageBatch, rest
 		return PageBatchReceipt{}, ErrBatchInvalid
 	}
 	before := s.statesLocked(tenantID)
-	if err := CheckPageBatch(before, batch, restore); err != nil {
+	state := PageSet{Scope: s.scopeLocked(tenantID), Revision: s.revisions[tenantID], Pages: before}
+	if err := CheckPageBatch(state, batch, restore); err != nil {
 		return PageBatchReceipt{}, err
 	}
-	result := PageBatchReceipt{Before: before, Mapping: map[string]int64{}}
+	result := PageBatchReceipt{TargetScope: state.Scope, BeforeRevision: state.Revision, Before: before, Mapping: map[string]int64{}}
 	now := time.Now().UTC()
 	for _, m := range batch.Mutations {
 		if m.Kind == "delete" {
@@ -69,6 +79,8 @@ func (s *MemoryPageStore) applyBatchLocked(tenantID int64, batch PageBatch, rest
 		result.Mapping[m.Key] = id
 	}
 	result.After = s.statesLocked(tenantID)
+	s.revisions[tenantID]++
+	result.AfterRevision = s.revisions[tenantID]
 	result.Seal()
 	return result, nil
 }

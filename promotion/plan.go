@@ -36,16 +36,16 @@ func (p Plan) ContentDigest() string { p.Digest = ""; return sumJSON(p) }
 // DryRun requires an explicit mapping for every selected page. SuggestedMapping
 // offers reviewable path matches, but never silently approves a rename/deletion.
 // The caller must separately verify both on-disk bundles before publication.
-func DryRun(s Snapshot, current []*store.Page, mappings []Mapping, deletes []DeleteSelection, targetBundle BundleManifest) (Plan, error) {
+func DryRun(s Snapshot, current store.PageSet, mappings []Mapping, deletes []DeleteSelection, targetBundle BundleManifest) (Plan, error) {
 	if err := s.Validate(); err != nil {
 		return Plan{}, err
 	}
 	if targetBundle.Validate() != nil {
 		return Plan{}, ErrBundle
 	}
-	byID := map[int64]*store.Page{}
-	for _, p := range current {
-		if p == nil || p.ID <= 0 || byID[p.ID] != nil {
+	byID := map[int64]store.PageState{}
+	for _, p := range current.Pages {
+		if p.ID <= 0 || byID[p.ID].ID != 0 {
 			return Plan{}, ErrMapping
 		}
 		byID[p.ID] = p
@@ -64,7 +64,7 @@ func DryRun(s Snapshot, current []*store.Page, mappings []Mapping, deletes []Del
 	if len(mappings) != len(s.Pages) {
 		return Plan{}, ErrMapping
 	}
-	plan := Plan{SnapshotDigest: s.Digest, BundleDigest: s.Bundle.Digest, BundleBaselineDigest: targetBundle.Digest, Batch: store.PageBatch{Baseline: store.Baseline(store.States(current))}, Diffs: []Diff{}}
+	plan := Plan{SnapshotDigest: s.Digest, BundleDigest: s.Bundle.Digest, BundleBaselineDigest: targetBundle.Digest, Batch: store.BatchFor(current, nil), Diffs: []Diff{}}
 	for _, page := range s.Pages {
 		m, ok := byKey[page.Key]
 		if !ok {
@@ -78,16 +78,16 @@ func DryRun(s Snapshot, current []*store.Page, mappings []Mapping, deletes []Del
 			mutation.Kind = "create"
 		} else {
 			p := byID[m.TargetID]
-			if p == nil || targets[p.ID] {
+			if p.ID == 0 || targets[p.ID] {
 				return Plan{}, ErrMapping
 			}
 			targets[p.ID] = true
-			if (p.Path != content.Path || p.Subsite != content.Subsite) && !m.AllowMove {
+			if (p.Content.Path != content.Path || p.Content.Subsite != content.Subsite) && !m.AllowMove {
 				return Plan{}, ErrMapping
 			}
 			diff.Action = "update"
-			diff.OldPath = p.Path
-			diff.BeforeDigest = store.ContentOf(p).Digest()
+			diff.OldPath = p.Content.Path
+			diff.BeforeDigest = p.Content.Digest()
 			mutation.Kind = "update"
 			mutation.ExpectedVersion = p.Version
 			if diff.BeforeDigest == diff.AfterDigest {
@@ -101,15 +101,15 @@ func DryRun(s Snapshot, current []*store.Page, mappings []Mapping, deletes []Del
 	}
 	for _, d := range deletes {
 		p := byID[d.TargetID]
-		if d.Key == "" || p == nil || targets[p.ID] {
+		if d.Key == "" || p.ID == 0 || targets[p.ID] {
 			return Plan{}, ErrMapping
 		}
 		targets[p.ID] = true
 		plan.Batch.Mutations = append(plan.Batch.Mutations, store.PageMutation{Key: d.Key, Kind: "delete", TargetID: p.ID, ExpectedVersion: p.Version})
-		plan.Diffs = append(plan.Diffs, Diff{Key: d.Key, TargetID: p.ID, Action: "delete", OldPath: p.Path, BeforeDigest: store.ContentOf(p).Digest()})
+		plan.Diffs = append(plan.Diffs, Diff{Key: d.Key, TargetID: p.ID, Action: "delete", OldPath: p.Content.Path, BeforeDigest: p.Content.Digest()})
 	}
 	if len(plan.Batch.Mutations) > 0 {
-		if err := store.CheckPageBatch(store.States(current), plan.Batch, false); err != nil {
+		if err := store.CheckPageBatch(current, plan.Batch, false); err != nil {
 			return Plan{}, err
 		}
 	}
@@ -117,15 +117,15 @@ func DryRun(s Snapshot, current []*store.Page, mappings []Mapping, deletes []Del
 	return plan, nil
 }
 
-func SuggestedMapping(s Snapshot, current []*store.Page) ([]Mapping, error) {
+func SuggestedMapping(s Snapshot, current store.PageSet) ([]Mapping, error) {
 	if s.Validate() != nil {
 		return nil, ErrInvalid
 	}
 	out := []Mapping{}
 	for _, page := range s.Pages {
 		m := Mapping{Key: page.Key}
-		for _, p := range current {
-			if p.Subsite == page.Content.Subsite && p.Path == page.Content.Path {
+		for _, p := range current.Pages {
+			if p.Content.Subsite == page.Content.Subsite && p.Content.Path == page.Content.Path {
 				if m.TargetID != 0 {
 					return nil, ErrMapping
 				}

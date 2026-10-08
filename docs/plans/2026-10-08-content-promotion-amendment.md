@@ -59,3 +59,22 @@ Use the existing module/build caches, `GOWORK=off`, package-targeted tests with
 new cache, full local race build, existing-schema mutation or process restart.
 CI may run its existing full checks plus an isolated Postgres service. Record
 exact-head checks and obtain independent source review before merge.
+
+## Independent-review correction: durable mutation generation
+
+Review of `f7fd874` found a delete/restore/edit/delete ABA hole: surviving page
+rows alone cannot detect a changed-then-empty tenant. This additive correction
+introduces a durable `cms_page_revisions` ledger with a unique content-scope
+identifier and monotonic tenant revision. Every successful ordinary page write,
+batch and rollback advances it under the same lock. Atomic `ReadPageState` returns
+scope/revision plus rows; plans/receipts bind them and refuse replay or scope drift.
+The scope is a content namespace identifier, not an authority grant or credential.
+
+The explicit SQL migration is a **new required host schema prerequisite**. It
+initializes existing tenants and new-tenant ledger rows. No automatic migration,
+existing-schema mutation or consumer adoption is authorized by this source PR.
+Before adoption, the host must review/apply the migration and fence writes while
+replacing every older writer: mixed old/new plugin versions would bypass the
+ledger. A new store instance against the same isolated database must retain the
+rollback/replay guard. Canonical block links, absolute reference exclusions and
+collision-free temporary paths receive regression coverage in the same correction.

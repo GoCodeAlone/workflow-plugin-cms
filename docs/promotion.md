@@ -13,7 +13,7 @@ includes source page ID/version keys, content and SHA-256 file inventory. Strict
 `promotion.Decode` refuses unknown/duplicate JSON keys, trailing documents and
 oversize input using fixed errors. It never imports tenant settings or authority.
 
-Read the production tenant's pages and inventory its immutable bundle. Review
+Read the production tenant atomically using `ReadPageState` and inventory its immutable bundle. The returned durable content scope/revision is part of the batch baseline. Review
 `promotion.SuggestedMapping` path matches, then supply an explicit mapping for
 every selected page to `promotion.DryRun`. Target page IDs are distinct from source
 IDs. A zero target ID explicitly creates; moves require `AllowMove`; deletion
@@ -28,7 +28,9 @@ Update requires the caller's loaded `Page.Version`. API PUT and DELETE require
 `expected_version`; missing preconditions fail and stale versions return 409.
 The editor keeps an unsaved draft on conflict and refreshes its version after a
 successful save. Existing external API consumers must upgrade before this plugin
-is adopted. `PageStore.Delete` also gains a required expected-version argument.
+is adopted. Every successful page write also advances the durable tenant content
+revision; receipts bind that revision and the content scope, preventing receipt
+replay even after create/delete history leaves the same surviving rows. `PageStore.Delete` also gains a required expected-version argument.
 
 Archive the content-only batch receipt before completing host publication. Its
 before/after rows, explicit mapping and integrity digest support
@@ -43,6 +45,13 @@ and static files shadowing selected CMS routes. Bundled photos retain relative
 references and exact hashes. The operator must stage those verified immutable
 bytes in the target bundle. The library does not configure media storage, copy
 uploaded objects, fetch third-party embeds or claim rights to external media.
+
+The SQL prerequisite `store/postgres/migrations/0001_page_content_revision.up.sql`
+must be reviewed and applied by the host before adoption. It initializes tenant
+content scopes/revisions and new-tenant initialization. This library never applies
+it automatically. Fence writes while replacing all older writers; mixed versions
+bypass the ledger. Preserve ledger history across restart/backup, and never drop
+or reset it to force a conflicted rollback.
 
 Live application remains blocked on host integration: current superadmin
 publication authority, a named approval digest, an exclusive publication/write

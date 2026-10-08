@@ -15,6 +15,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -112,14 +113,23 @@ type PageStore interface {
 // Production uses a postgres-backed implementation that wires the same
 // interface.
 type MemoryPageStore struct {
-	mu     sync.RWMutex
-	nextID int64
-	pages  map[int64]*Page // by ID
+	mu        sync.RWMutex
+	nextID    int64
+	pages     map[int64]*Page // by ID
+	revisions map[int64]int64
+	scopes    map[int64]string
 }
 
 // NewMemoryPageStore returns an empty in-memory store.
 func NewMemoryPageStore() *MemoryPageStore {
-	return &MemoryPageStore{pages: map[int64]*Page{}}
+	return &MemoryPageStore{pages: map[int64]*Page{}, revisions: map[int64]int64{}, scopes: map[int64]string{}}
+}
+
+func (s *MemoryPageStore) scopeLocked(tenantID int64) string {
+	if s.scopes[tenantID] == "" {
+		s.scopes[tenantID] = rand.Text()
+	}
+	return s.scopes[tenantID]
 }
 
 // Create inserts the page. Returns ErrPathConflict if (tenant, subsite,
@@ -151,6 +161,8 @@ func (s *MemoryPageStore) Create(_ context.Context, tenantID int64, p *Page) err
 	cp.BodyBlocks = append(json.RawMessage(nil), p.BodyBlocks...)
 	cp.PublishAt, cp.UnpublishAt = cloneTime(p.PublishAt), cloneTime(p.UnpublishAt)
 	s.pages[p.ID] = &cp
+	s.scopeLocked(tenantID)
+	s.revisions[tenantID]++
 	return nil
 }
 
@@ -215,6 +227,8 @@ func (s *MemoryPageStore) Update(_ context.Context, tenantID int64, p *Page) err
 	cp.BodyBlocks = append(json.RawMessage(nil), p.BodyBlocks...)
 	cp.PublishAt, cp.UnpublishAt = cloneTime(p.PublishAt), cloneTime(p.UnpublishAt)
 	s.pages[p.ID] = &cp
+	s.scopeLocked(tenantID)
+	s.revisions[tenantID]++
 	return nil
 }
 
@@ -230,6 +244,8 @@ func (s *MemoryPageStore) Delete(_ context.Context, tenantID, id int64, expected
 		return ErrVersionConflict
 	}
 	delete(s.pages, id)
+	s.scopeLocked(tenantID)
+	s.revisions[tenantID]++
 	return nil
 }
 

@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
+	"strconv"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
 	"github.com/jackc/pgx/v5"
@@ -62,6 +64,47 @@ func statesInTransaction(ctx context.Context, tx pgx.Tx, tenantID int64) ([]stor
 	return store.States(pages), nil
 }
 
+func pageStateInTransaction(ctx context.Context, tx pgx.Tx, tenantID int64) (store.PageSet, error) {
+	state := store.PageSet{}
+	err := tx.QueryRow(ctx, `SELECT content_scope,revision FROM cms_page_revisions WHERE tenant_id=$1 FOR UPDATE`, tenantID).Scan(&state.Scope, &state.Revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return state, store.ErrNotFound
+	}
+	if err != nil {
+		return state, store.ErrBatchInvalid
+	}
+	state.Pages, err = statesInTransaction(ctx, tx, tenantID)
+	return state, err
+}
+
+func advanceRevision(ctx context.Context, tx pgx.Tx, tenantID int64) (int64, error) {
+	var revision int64
+	err := tx.QueryRow(ctx, `UPDATE cms_page_revisions SET revision=revision+1 WHERE tenant_id=$1 RETURNING revision`, tenantID).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, store.ErrNotFound
+	}
+	if err != nil {
+		return 0, store.ErrBatchInvalid
+	}
+	return revision, nil
+}
+
+func (s *Store) ReadPageState(ctx context.Context, tenantID int64) (store.PageSet, error) {
+	tx, err := s.pageTransaction(ctx, tenantID)
+	if err != nil {
+		return store.PageSet{}, err
+	}
+	defer tx.Rollback(ctx)
+	state, err := pageStateInTransaction(ctx, tx, tenantID)
+	if err != nil {
+		return state, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return store.PageSet{}, store.ErrBatchInvalid
+	}
+	return state, nil
+}
+
 func (s *Store) ApplyPageBatch(ctx context.Context, tenantID int64, batch store.PageBatch) (store.PageBatchReceipt, error) {
 	return s.applyBatch(ctx, tenantID, batch, false)
 }
@@ -80,19 +123,40 @@ func (s *Store) applyBatch(ctx context.Context, tenantID int64, batch store.Page
 		return store.PageBatchReceipt{}, err
 	}
 	defer tx.Rollback(ctx)
-	before, err := statesInTransaction(ctx, tx, tenantID)
+	state, err := pageStateInTransaction(ctx, tx, tenantID)
 	if err != nil {
 		return store.PageBatchReceipt{}, store.ErrBatchInvalid
 	}
-	if err = store.CheckPageBatch(before, batch, restore); err != nil {
+	if err = store.CheckPageBatch(state, batch, restore); err != nil {
 		return store.PageBatchReceipt{}, err
 	}
-	result := store.PageBatchReceipt{Before: before, Mapping: map[string]int64{}}
+	result := store.PageBatchReceipt{TargetScope: state.Scope, BeforeRevision: state.Revision, Before: state.Pages, Mapping: map[string]int64{}}
 	// Vacate moved paths inside this transaction so swaps work despite immediate
 	// unique constraints. Validated final content replaces every temporary path.
+	occupied := map[string]bool{}
+	current := map[int64]store.PageState{}
+	for _, p := range state.Pages {
+		occupied[p.Content.Subsite+"\x00"+p.Content.Path] = true
+		current[p.ID] = p
+	}
 	for _, m := range batch.Mutations {
-		if m.Kind == "update" {
-			if _, err = tx.Exec(ctx, `UPDATE pages SET path='/__cms_batch_internal__/' || id::text WHERE tenant_id=$1 AND id=$2 AND version=$3`, tenantID, m.TargetID, m.ExpectedVersion); err != nil {
+		if m.Content != nil {
+			occupied[m.Content.Subsite+"\x00"+m.Content.Path] = true
+		}
+	}
+	for _, m := range batch.Mutations {
+		if m.Kind == "update" && (m.Content.Path != current[m.TargetID].Content.Path || m.Content.Subsite != current[m.TargetID].Content.Subsite) {
+			old := current[m.TargetID]
+			var staging string
+			for {
+				staging = "/__cms_batch_stage__/" + rand.Text() + "/" + strconv.FormatInt(m.TargetID, 10)
+				key := old.Content.Subsite + "\x00" + staging
+				if !occupied[key] {
+					occupied[key] = true
+					break
+				}
+			}
+			if _, err = tx.Exec(ctx, `UPDATE pages SET path=$4 WHERE tenant_id=$1 AND id=$2 AND version=$3`, tenantID, m.TargetID, m.ExpectedVersion, staging); err != nil {
 				return store.PageBatchReceipt{}, store.ErrBatchInvalid
 			}
 		}
@@ -126,6 +190,10 @@ func (s *Store) applyBatch(ctx context.Context, tenantID int64, batch store.Page
 	result.After, err = statesInTransaction(ctx, tx, tenantID)
 	if err != nil {
 		return store.PageBatchReceipt{}, store.ErrBatchInvalid
+	}
+	result.AfterRevision, err = advanceRevision(ctx, tx, tenantID)
+	if err != nil {
+		return store.PageBatchReceipt{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return store.PageBatchReceipt{}, store.ErrBatchInvalid

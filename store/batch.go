@@ -125,14 +125,19 @@ type PageMutation struct {
 	Content         *PageContent `json:"content,omitempty"`
 }
 type PageBatch struct {
-	Baseline  []PageBaseline `json:"baseline"`
-	Mutations []PageMutation `json:"mutations"`
+	TargetScope      string         `json:"target_scope"`
+	BaselineRevision int64          `json:"baseline_revision"`
+	Baseline         []PageBaseline `json:"baseline"`
+	Mutations        []PageMutation `json:"mutations"`
 }
 type PageBatchReceipt struct {
-	Before  []PageState      `json:"before"`
-	After   []PageState      `json:"after"`
-	Mapping map[string]int64 `json:"mapping"`
-	Digest  string           `json:"digest"`
+	TargetScope    string           `json:"target_scope"`
+	BeforeRevision int64            `json:"before_revision"`
+	AfterRevision  int64            `json:"after_revision"`
+	Before         []PageState      `json:"before"`
+	After          []PageState      `json:"after"`
+	Mapping        map[string]int64 `json:"mapping"`
+	Digest         string           `json:"digest"`
 }
 
 // Seal detects archive corruption. It is not a signature or authorization.
@@ -146,15 +151,29 @@ func (r *PageBatchReceipt) Seal() {
 // PageBatchStore is internal persistence, not an authorized publication API.
 // The host must provide approval, fencing, verified bundles and durable backups.
 type PageBatchStore interface {
+	ReadPageState(context.Context, int64) (PageSet, error)
 	ApplyPageBatch(context.Context, int64, PageBatch) (PageBatchReceipt, error)
 	RollbackPageBatch(context.Context, int64, PageBatchReceipt) (PageBatchReceipt, error)
+}
+
+// PageSet is read atomically in the invocation's authorized tenant. Scope is a
+// durable content namespace, never a permission or copied tenant setting.
+type PageSet struct {
+	Scope    string      `json:"scope"`
+	Revision int64       `json:"revision"`
+	Pages    []PageState `json:"pages"`
+}
+
+func BatchFor(state PageSet, mutations []PageMutation) PageBatch {
+	return PageBatch{TargetScope: state.Scope, BaselineRevision: state.Revision, Baseline: Baseline(state.Pages), Mutations: mutations}
 }
 
 // CheckPageBatch compares the entire tenant baseline and checks the final paths
 // before any mutation. Omitted pages remain untouched. restore is never accepted
 // by ordinary apply; it is generated only by the guarded rollback implementation.
-func CheckPageBatch(current []PageState, batch PageBatch, allowRestore bool) error {
-	if !reflect.DeepEqual(Baseline(current), batch.Baseline) {
+func CheckPageBatch(state PageSet, batch PageBatch, allowRestore bool) error {
+	current := state.Pages
+	if state.Scope == "" || state.Scope != batch.TargetScope || state.Revision != batch.BaselineRevision || !reflect.DeepEqual(Baseline(current), batch.Baseline) {
 		return ErrVersionConflict
 	}
 	if len(batch.Mutations) == 0 {
@@ -239,7 +258,7 @@ func CheckPageBatch(current []PageState, batch PageBatch, allowRestore bool) err
 func RollbackBatch(r PageBatchReceipt) (PageBatch, error) {
 	copy := r
 	copy.Seal()
-	if r.Digest == "" || r.Digest != copy.Digest {
+	if r.Digest == "" || r.Digest != copy.Digest || r.TargetScope == "" || r.BeforeRevision < 0 || r.AfterRevision <= r.BeforeRevision {
 		return PageBatch{}, ErrBatchInvalid
 	}
 	before := map[int64]PageState{}
@@ -262,7 +281,7 @@ func RollbackBatch(r PageBatchReceipt) (PageBatch, error) {
 		}
 		after[p.ID] = p
 	}
-	b := PageBatch{Baseline: Baseline(r.After)}
+	b := PageBatch{TargetScope: r.TargetScope, BaselineRevision: r.AfterRevision, Baseline: Baseline(r.After)}
 	for _, p := range r.After {
 		old, ok := before[p.ID]
 		if !ok {

@@ -58,6 +58,8 @@ The public CMS index route `/media` may be a relative hyperlink only when that
 exact route is in the selected snapshot pages. The exception covers navigation,
 including canonical block links; it does not permit media resource URLs, upload
 children, unselected routes, absolute private URLs or other private namespaces.
+Only canonical `/media` or relative `media` path spelling qualifies; encoded,
+dot-segment and trailing-slash aliases remain refused.
 
 The SQL prerequisite `store/postgres/migrations/0001_page_content_revision.up.sql`
 must be reviewed and applied by the host before adoption. It initializes tenant

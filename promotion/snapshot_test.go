@@ -293,6 +293,12 @@ func TestSelectedMediaRouteLinksPreserveUploadAndPrivateRefusal(t *testing.T) {
 		{"selected-link-query-anchor", `<a href="/media?view=photos#portraits">Media</a>`, true, true},
 		{"unselected-route-link", `<a href="/media">Media</a>`, false, false},
 		{"unselected-relative-path", `<a href="media">Media</a>`, false, false},
+		{"encoded-media-index", `<a href="/%6dedia">Media</a>`, true, false},
+		{"dot-media-index", `<a href="/assets/../media">Media</a>`, true, false},
+		{"encoded-dot-media-index", `<a href="/assets/%2e%2e/media">Media</a>`, true, false},
+		{"root-dot-media-index", `<a href="/./media">Media</a>`, true, false},
+		{"relative-dot-media-index", `<a href="./media">Media</a>`, true, false},
+		{"trailing-slash-media-index", `<a href="/media/">Media</a>`, true, false},
 		{"selected-route-image-source", `<img src="/media">`, true, false},
 		{"selected-route-stylesheet-resource", `<link rel="stylesheet" href="/media">`, true, false},
 		{"selected-route-svg-image-resource", `<svg><image href="/media"></image></svg>`, true, false},
@@ -355,7 +361,7 @@ func TestSelectedMediaRouteLinksPreserveUploadAndPrivateRefusal(t *testing.T) {
 	}
 	// Canonical block hrefs and raw HTML must share the same route policy.
 	for _, selected := range []bool{false, true} {
-		for _, href := range []string{"/media", "media", "/media/10/hash.jpg", "/%6dedia/10/hash.jpg", "https://example.com/media", "/api"} {
+		for _, href := range []string{"/media", "media", "/%6dedia", "/assets/../media", "/assets/%2e%2e/media", "/./media", "./media", "/media/", "/media/10/hash.jpg", "/%6dedia/10/hash.jpg", "https://example.com/media", "/api"} {
 			t.Run("canonical-"+href+"-selected-"+strconv.FormatBool(selected), func(t *testing.T) {
 				s, root, _, _ := fixture(t)
 				p := s.Pages[0].Content

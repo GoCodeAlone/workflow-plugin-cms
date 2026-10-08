@@ -107,3 +107,8 @@ and dot-normalized upload refusals, plus the private bundle consumer in a fresh
 PostgreSQL schema. New exact-head tests and full independent source review are
 required. No hosted write, migration/adoption, source pin or live apply route
 is added; the prior locked plan and release gates stay intact.
+
+The early source review tightens this exception to canonical raw `/media` or
+relative `media` path spelling. Encoded, dot-segment and trailing-slash aliases
+remain refused even when normalization would resolve to the selected route.
+The same negative cases cover all HTML surfaces and canonical block hrefs.

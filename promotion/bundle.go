@@ -165,7 +165,8 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		// /media is also a valid public CMS index route. Only navigation to
 		// that exact selected route may use it; uploads, resource requests,
 		// absolute private URLs and other private namespaces remain refused.
-		selectedMediaLink := kind == navigationReference && u.Scheme == "" && u.Host == "" && resolved == "/media" && routes[resolved]
+		canonicalMediaPath := u.RawPath == "" && (u.Path == "/media" || u.Path == "media")
+		selectedMediaLink := kind == navigationReference && u.Scheme == "" && u.Host == "" && canonicalMediaPath && resolved == "/media" && routes[resolved]
 		if forbiddenPath(resolved) && !selectedMediaLink {
 			return ErrBundle
 		}

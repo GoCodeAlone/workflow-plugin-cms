@@ -89,3 +89,21 @@ bodies, selected CMS templates and bundled HTML, including private upload/API
 URLs. Public HTTPS iframe sources and validated form overrides remain supported.
 This does not add a general active-content sandbox or change the host publication
 gates, schema prerequisite, consumer pins or approval boundary.
+
+## Consumer-boundary correction: selected public media index
+
+The unchanged reviewed-source PostgreSQL consumer completed the generic frozen
+snapshot → explicit mapping/dryrun → apply → safe rollback path, including
+cross-tenant/scope refusals, monotonic versions/revisions and newer-edit refusal.
+The optional private six-page bundle then exposed a public `/media` navigation
+collision with the upload namespace refusal. The failed optional run and all
+completed generic evidence remain preserved outside this public repository.
+
+Parent authorizes a narrow exception for relative hyperlinks to exactly the
+selected public CMS route `/media`. Resource sources, upload children, absolute
+private URLs, unselected routes and other private namespaces still refuse.
+Acceptance covers body/template/static HTML and canonical block hrefs, encoded
+and dot-normalized upload refusals, plus the private bundle consumer in a fresh
+PostgreSQL schema. New exact-head tests and full independent source review are
+required. No hosted write, migration/adoption, source pin or live apply route
+is added; the prior locked plan and release gates stay intact.

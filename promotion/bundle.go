@@ -140,7 +140,14 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 			return ErrBundle
 		}
 	}
-	checkRef := func(raw, base string, link bool) error {
+	type referenceKind uint8
+	const (
+		resourceReference referenceKind = iota
+		navigationReference
+		descriptionReference
+	)
+	checkRef := func(raw, base string, kind referenceKind) error {
+		link := kind != resourceReference
 		if raw == "" || strings.HasPrefix(raw, "#") {
 			return nil
 		}
@@ -155,7 +162,11 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		if u.Scheme == "" && !strings.HasPrefix(u.Path, "/") {
 			resolved = path.Join(path.Dir(base), u.Path)
 		}
-		if forbiddenPath(resolved) {
+		// /media is also a valid public CMS index route. Only navigation to
+		// that exact selected route may use it; uploads, resource requests,
+		// absolute private URLs and other private namespaces remain refused.
+		selectedMediaLink := kind == navigationReference && u.Scheme == "" && u.Host == "" && resolved == "/media" && routes[resolved]
+		if forbiddenPath(resolved) && !selectedMediaLink {
 			return ErrBundle
 		}
 		if u.Scheme != "" {
@@ -181,7 +192,7 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 			if ref == "" {
 				ref = m[2]
 			}
-			if err := checkRef(ref, base, false); err != nil {
+			if err := checkRef(ref, base, resourceReference); err != nil {
 				return err
 			}
 		}
@@ -218,16 +229,20 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 						return ErrBundle
 					}
 				case "href", "src", "poster", "action", "formaction", "background", "manifest":
-					if err := checkRef(a.Val, base, a.Key == "href"); err != nil {
+					kind := resourceReference
+					if a.Key == "href" && (n.Data == "a" || n.Data == "area") {
+						kind = navigationReference
+					}
+					if err := checkRef(a.Val, base, kind); err != nil {
 						return err
 					}
 				case "cite", "longdesc":
-					if err := checkRef(a.Val, base, true); err != nil {
+					if err := checkRef(a.Val, base, descriptionReference); err != nil {
 						return err
 					}
 				case "ping":
 					for _, ref := range strings.Fields(a.Val) {
-						if err := checkRef(ref, base, false); err != nil {
+						if err := checkRef(ref, base, resourceReference); err != nil {
 							return err
 						}
 					}
@@ -237,7 +252,7 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 						if len(parts) == 0 {
 							return ErrBundle
 						}
-						if err := checkRef(parts[0], base, false); err != nil {
+						if err := checkRef(parts[0], base, resourceReference); err != nil {
 							return err
 						}
 					}
@@ -292,7 +307,11 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 						if ref, ok := item.(string); ok {
 							switch key {
 							case "href", "src", "url", "poster":
-								if err := checkRef(ref, p.Path, key == "href"); err != nil {
+								kind := resourceReference
+								if key == "href" {
+									kind = navigationReference
+								}
+								if err := checkRef(ref, p.Path, kind); err != nil {
 									return err
 								}
 							}

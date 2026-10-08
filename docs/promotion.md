@@ -54,6 +54,11 @@ and other resource attributes use the same private-path and asset checks.
 This is reference validation, not a JavaScript sandbox. The host must review the
 exact approved bundle's scripts and runtime behavior separately.
 
+The public CMS index route `/media` may be a relative hyperlink only when that
+exact route is in the selected snapshot pages. The exception covers navigation,
+including canonical block links; it does not permit media resource URLs, upload
+children, unselected routes, absolute private URLs or other private namespaces.
+
 The SQL prerequisite `store/postgres/migrations/0001_page_content_revision.up.sql`
 must be reviewed and applied by the host before adoption. It initializes tenant
 content scopes/revisions and new-tenant initialization. This library never applies

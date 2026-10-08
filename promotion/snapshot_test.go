@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -277,5 +278,101 @@ func TestBundleSupportedEmbedsAndResourceOverridesRemainUsable(t *testing.T) {
 	}
 	if err = VerifyBundle(root, manifest, []store.PageContent{p}); err != nil {
 		t.Fatalf("supported public embed or validated resource override refused: %v", err)
+	}
+}
+
+func TestSelectedMediaRouteLinksPreserveUploadAndPrivateRefusal(t *testing.T) {
+	cases := []struct {
+		name     string
+		html     string
+		selected bool
+		allowed  bool
+	}{
+		{"selected-relative-link", `<a href="/media">Media</a>`, true, true},
+		{"selected-relative-path", `<a href="media">Media</a>`, true, true},
+		{"selected-link-query-anchor", `<a href="/media?view=photos#portraits">Media</a>`, true, true},
+		{"unselected-route-link", `<a href="/media">Media</a>`, false, false},
+		{"unselected-relative-path", `<a href="media">Media</a>`, false, false},
+		{"selected-route-image-source", `<img src="/media">`, true, false},
+		{"selected-route-stylesheet-resource", `<link rel="stylesheet" href="/media">`, true, false},
+		{"selected-route-svg-image-resource", `<svg><image href="/media"></image></svg>`, true, false},
+		{"selected-route-svg-use-resource", `<svg><use href="/media"></use></svg>`, true, false},
+		{"selected-route-description-reference", `<img src="/assets/photo.jpg" longdesc="/media">`, true, false},
+		{"selected-route-iframe-source", `<iframe src="/media"></iframe>`, true, false},
+		{"selected-route-form-action", `<form action="/media"></form>`, true, false},
+		{"selected-route-form-override", `<button formaction="/media">Submit</button>`, true, false},
+		{"selected-route-source-set", `<img srcset="/media 1x">`, true, false},
+		{"selected-route-style-resource", `<p style="background:url(/media)">Text</p>`, true, false},
+		{"uploaded-child-link", `<a href="/media/10/hash.jpg">Upload</a>`, true, false},
+		{"uploaded-child-source", `<img src="/media/10/hash.jpg">`, true, false},
+		{"encoded-upload-child", `<a href="/%6dedia/10/hash.jpg">Upload</a>`, true, false},
+		{"encoded-upload-separator", `<a href="/media%2f10/hash.jpg">Upload</a>`, true, false},
+		{"dot-upload-child", `<a href="/assets/../media/10/hash.jpg">Upload</a>`, true, false},
+		{"encoded-dot-upload-child", `<a href="/assets/%2e%2e/media/10/hash.jpg">Upload</a>`, true, false},
+		{"absolute-media-index", `<a href="https://example.com/media">Private</a>`, true, false},
+		{"absolute-media-upload", `<a href="https://example.com/media/10/hash.jpg">Private</a>`, true, false},
+		{"protocol-relative-media", `<a href="//example.com/media">Private</a>`, true, false},
+		{"api-namespace-link", `<a href="/api">Private</a>`, true, false},
+		{"admin-namespace-link", `<a href="/admin">Private</a>`, true, false},
+		{"cms-namespace-link", `<a href="/cms">Private</a>`, true, false},
+	}
+	for _, surface := range []string{"page-body", "cms-template", "static-html"} {
+		t.Run(surface, func(t *testing.T) {
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					s, root, _, _ := fixture(t)
+					p := s.Pages[0].Content
+					switch surface {
+					case "page-body":
+						p.BodyHTML = tc.html
+					case "cms-template":
+						if err := os.WriteFile(filepath.Join(root, "cms/templates/main.html"), []byte(tc.html+`<main><!--cms:body--></main>`), 0600); err != nil {
+							t.Fatal(err)
+						}
+					case "static-html":
+						if err := os.WriteFile(filepath.Join(root, "resource.html"), []byte(tc.html), 0600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					contents := []store.PageContent{p}
+					if tc.selected {
+						media := s.Pages[0].Content
+						media.Path = "/media"
+						media.BodyHTML = "<p>Public media page.</p>"
+						contents = append(contents, media)
+					}
+					manifest, err := InventoryBundle(root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					err = VerifyBundle(root, manifest, contents)
+					if tc.allowed && err != nil || !tc.allowed && err != ErrBundle {
+						t.Fatalf("selected media route policy mismatch: %v", err)
+					}
+				})
+			}
+		})
+	}
+	// Canonical block hrefs and raw HTML must share the same route policy.
+	for _, selected := range []bool{false, true} {
+		for _, href := range []string{"/media", "media", "/media/10/hash.jpg", "/%6dedia/10/hash.jpg", "https://example.com/media", "/api"} {
+			t.Run("canonical-"+href+"-selected-"+strconv.FormatBool(selected), func(t *testing.T) {
+				s, root, _, _ := fixture(t)
+				p := s.Pages[0].Content
+				p.BodyBlocks, _ = json.Marshal(map[string]any{"type": "doc", "content": []any{map[string]any{"type": "link", "attrs": map[string]any{"href": href}, "content": []any{map[string]any{"type": "text", "text": "Media"}}}}})
+				contents := []store.PageContent{p}
+				if selected {
+					media := s.Pages[0].Content
+					media.Path = "/media"
+					media.BodyHTML = "<p>Public media page.</p>"
+					contents = append(contents, media)
+				}
+				allowed := selected && (href == "/media" || href == "media")
+				err := VerifyBundle(root, s.Bundle, contents)
+				if allowed && err != nil || !allowed && err != ErrBundle {
+					t.Fatalf("canonical media route policy mismatch: %v", err)
+				}
+			})
+		}
 	}
 }

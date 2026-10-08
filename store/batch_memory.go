@@ -1,0 +1,74 @@
+package store
+
+import (
+	"context"
+	"time"
+)
+
+func (s *MemoryPageStore) statesLocked(tenantID int64) []PageState {
+	var pages []*Page
+	for _, p := range s.pages {
+		if p.TenantID == tenantID {
+			pages = append(pages, p)
+		}
+	}
+	return States(pages)
+}
+
+func (s *MemoryPageStore) ApplyPageBatch(_ context.Context, tenantID int64, batch PageBatch) (PageBatchReceipt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.applyBatchLocked(tenantID, batch, false)
+}
+
+func (s *MemoryPageStore) RollbackPageBatch(_ context.Context, tenantID int64, receipt PageBatchReceipt) (PageBatchReceipt, error) {
+	batch, err := RollbackBatch(receipt)
+	if err != nil {
+		return PageBatchReceipt{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.applyBatchLocked(tenantID, batch, true)
+}
+
+func (s *MemoryPageStore) applyBatchLocked(tenantID int64, batch PageBatch, restore bool) (PageBatchReceipt, error) {
+	if tenantID <= 0 {
+		return PageBatchReceipt{}, ErrBatchInvalid
+	}
+	before := s.statesLocked(tenantID)
+	if err := CheckPageBatch(before, batch, restore); err != nil {
+		return PageBatchReceipt{}, err
+	}
+	result := PageBatchReceipt{Before: before, Mapping: map[string]int64{}}
+	now := time.Now().UTC()
+	for _, m := range batch.Mutations {
+		if m.Kind == "delete" {
+			delete(s.pages, m.TargetID)
+			result.Mapping[m.Key] = m.TargetID
+			continue
+		}
+		id, version := m.TargetID, m.ExpectedVersion+1
+		if m.Kind == "create" {
+			s.nextID++
+			id = s.nextID
+			version = 1
+		}
+		if m.Kind == "restore" {
+			version = m.ExpectedVersion
+			if id > s.nextID {
+				s.nextID = id
+			}
+		}
+		p := m.Content.Page(tenantID, id, version)
+		p.CreatedAt = now
+		p.UpdatedAt = now
+		if old := s.pages[id]; old != nil {
+			p.CreatedAt = old.CreatedAt
+		}
+		s.pages[id] = p
+		result.Mapping[m.Key] = id
+	}
+	result.After = s.statesLocked(tenantID)
+	result.Seal()
+	return result, nil
+}

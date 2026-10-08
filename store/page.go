@@ -15,6 +15,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -92,6 +93,9 @@ var ErrNotFound = errors.New("page not found")
 // duplicate (tenant_id, subsite, path) tuple.
 var ErrPathConflict = errors.New("page path conflict")
 
+// ErrVersionConflict refuses stale or missing write preconditions.
+var ErrVersionConflict = errors.New("page changed; reload before saving or deleting")
+
 // PageStore persists Page records scoped by tenant.
 //
 // Every method takes tenantID as the FIRST arg AFTER ctx — making
@@ -101,7 +105,7 @@ type PageStore interface {
 	Get(ctx context.Context, tenantID int64, id int64) (*Page, error)
 	GetByPath(ctx context.Context, tenantID int64, subsite, path string) (*Page, error)
 	Update(ctx context.Context, tenantID int64, p *Page) error
-	Delete(ctx context.Context, tenantID int64, id int64) error
+	Delete(ctx context.Context, tenantID int64, id int64, expectedVersion int) error
 	List(ctx context.Context, tenantID int64, subsite string) ([]*Page, error)
 }
 
@@ -109,14 +113,23 @@ type PageStore interface {
 // Production uses a postgres-backed implementation that wires the same
 // interface.
 type MemoryPageStore struct {
-	mu     sync.RWMutex
-	nextID int64
-	pages  map[int64]*Page // by ID
+	mu        sync.RWMutex
+	nextID    int64
+	pages     map[int64]*Page // by ID
+	revisions map[int64]int64
+	scopes    map[int64]string
 }
 
 // NewMemoryPageStore returns an empty in-memory store.
 func NewMemoryPageStore() *MemoryPageStore {
-	return &MemoryPageStore{pages: map[int64]*Page{}}
+	return &MemoryPageStore{pages: map[int64]*Page{}, revisions: map[int64]int64{}, scopes: map[int64]string{}}
+}
+
+func (s *MemoryPageStore) scopeLocked(tenantID int64) string {
+	if s.scopes[tenantID] == "" {
+		s.scopes[tenantID] = rand.Text()
+	}
+	return s.scopes[tenantID]
 }
 
 // Create inserts the page. Returns ErrPathConflict if (tenant, subsite,
@@ -145,7 +158,11 @@ func (s *MemoryPageStore) Create(_ context.Context, tenantID int64, p *Page) err
 		p.Version = 1
 	}
 	cp := *p
+	cp.BodyBlocks = append(json.RawMessage(nil), p.BodyBlocks...)
+	cp.PublishAt, cp.UnpublishAt = cloneTime(p.PublishAt), cloneTime(p.UnpublishAt)
 	s.pages[p.ID] = &cp
+	s.scopeLocked(tenantID)
+	s.revisions[tenantID]++
 	return nil
 }
 
@@ -159,6 +176,8 @@ func (s *MemoryPageStore) Get(_ context.Context, tenantID, id int64) (*Page, err
 		return nil, ErrNotFound
 	}
 	cp := *p
+	cp.BodyBlocks = append(json.RawMessage(nil), p.BodyBlocks...)
+	cp.PublishAt, cp.UnpublishAt = cloneTime(p.PublishAt), cloneTime(p.UnpublishAt)
 	return &cp, nil
 }
 
@@ -169,6 +188,8 @@ func (s *MemoryPageStore) GetByPath(_ context.Context, tenantID int64, subsite, 
 	for _, p := range s.pages {
 		if p.TenantID == tenantID && p.Subsite == subsite && p.Path == path {
 			cp := *p
+			cp.BodyBlocks = append(json.RawMessage(nil), p.BodyBlocks...)
+			cp.PublishAt, cp.UnpublishAt = cloneTime(p.PublishAt), cloneTime(p.UnpublishAt)
 			return &cp, nil
 		}
 	}
@@ -192,6 +213,9 @@ func (s *MemoryPageStore) Update(_ context.Context, tenantID int64, p *Page) err
 	if !ok || existing.TenantID != tenantID {
 		return ErrNotFound
 	}
+	if p.Version <= 0 || p.Version != existing.Version {
+		return ErrVersionConflict
+	}
 	if s.duplicateLocked(tenantID, p.Subsite, p.Path, p.ID) {
 		return ErrPathConflict
 	}
@@ -200,19 +224,28 @@ func (s *MemoryPageStore) Update(_ context.Context, tenantID int64, p *Page) err
 	p.CreatedAt = existing.CreatedAt
 	p.UpdatedAt = time.Now().UTC()
 	cp := *p
+	cp.BodyBlocks = append(json.RawMessage(nil), p.BodyBlocks...)
+	cp.PublishAt, cp.UnpublishAt = cloneTime(p.PublishAt), cloneTime(p.UnpublishAt)
 	s.pages[p.ID] = &cp
+	s.scopeLocked(tenantID)
+	s.revisions[tenantID]++
 	return nil
 }
 
 // Delete removes the page. ErrNotFound on miss / wrong tenant.
-func (s *MemoryPageStore) Delete(_ context.Context, tenantID, id int64) error {
+func (s *MemoryPageStore) Delete(_ context.Context, tenantID, id int64, expectedVersion int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	existing, ok := s.pages[id]
 	if !ok || existing.TenantID != tenantID {
 		return ErrNotFound
 	}
+	if expectedVersion <= 0 || expectedVersion != existing.Version {
+		return ErrVersionConflict
+	}
 	delete(s.pages, id)
+	s.scopeLocked(tenantID)
+	s.revisions[tenantID]++
 	return nil
 }
 
@@ -231,6 +264,8 @@ func (s *MemoryPageStore) List(_ context.Context, tenantID int64, subsite string
 			continue
 		}
 		cp := *p
+		cp.BodyBlocks = append(json.RawMessage(nil), p.BodyBlocks...)
+		cp.PublishAt, cp.UnpublishAt = cloneTime(p.PublishAt), cloneTime(p.UnpublishAt)
 		out = append(out, &cp)
 	}
 	// Stable sort by Path for deterministic output.

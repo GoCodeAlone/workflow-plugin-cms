@@ -52,7 +52,7 @@ func TestPageStore_CreateGetUpdateDelete(t *testing.T) {
 	}
 
 	// Delete
-	if err := s.Delete(ctx, 1, got.ID); err != nil {
+	if err := s.Delete(ctx, 1, got.ID, got.Version); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if _, err := s.Get(ctx, 1, got.ID); !errors.Is(err, ErrNotFound) {
@@ -96,7 +96,7 @@ func TestPageStore_DeleteCrossTenantNoLeak(t *testing.T) {
 	p := makePage(1, "/x", "P")
 	_ = s.Create(ctx, 1, p)
 
-	if err := s.Delete(ctx, 2, p.ID); !errors.Is(err, ErrNotFound) {
+	if err := s.Delete(ctx, 2, p.ID, p.Version); !errors.Is(err, ErrNotFound) {
 		t.Errorf("cross-tenant Delete: got %v want ErrNotFound", err)
 	}
 	// Sanity: page still exists for owner.

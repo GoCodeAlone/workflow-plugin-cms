@@ -235,8 +235,24 @@ func (s *Store) ListDomains(ctx context.Context, tenantID int64) ([]*store.Domai
 	return out, rows.Err()
 }
 
-// Create inserts a page.
+// Create serializes with content batches in this tenant.
 func (s *Store) Create(ctx context.Context, tenantID int64, p *store.Page) error {
+	tx, err := s.pageTransaction(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err = createPage(ctx, tx, tenantID, p); err != nil {
+		return err
+	}
+	if _, err = advanceRevision(ctx, tx, tenantID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// Create inserts a page.
+func createPage(ctx context.Context, q pageQueries, tenantID int64, p *store.Page) error {
 	if p == nil {
 		return errors.New("page: nil")
 	}
@@ -245,7 +261,7 @@ func (s *Store) Create(ctx context.Context, tenantID int64, p *store.Page) error
 	if err := p.Validate(); err != nil {
 		return err
 	}
-	row := s.pool.QueryRow(ctx, `
+	row := q.QueryRow(ctx, `
 		INSERT INTO pages (tenant_id, subsite, path, title, body_html, body_blocks, status, template_id, publish_at, unpublish_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9, $10)
 		RETURNING id, tenant_id, COALESCE(subsite, ''), path, title, COALESCE(body_html, ''),
@@ -292,28 +308,47 @@ func (s *Store) GetByPath(ctx context.Context, tenantID int64, subsite, path str
 	return p, nil
 }
 
-// Update writes a tenant-scoped page.
+// Update uses the caller's loaded version, never a newly fetched version.
 func (s *Store) Update(ctx context.Context, tenantID int64, p *store.Page) error {
+	tx, err := s.pageTransaction(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err = updatePage(ctx, tx, tenantID, p); err != nil {
+		return err
+	}
+	if _, err = advanceRevision(ctx, tx, tenantID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// Update writes a tenant-scoped page.
+func updatePage(ctx context.Context, q pageQueries, tenantID int64, p *store.Page) error {
 	if p == nil {
 		return errors.New("page: nil")
+	}
+	if p.Version <= 0 {
+		return store.ErrVersionConflict
 	}
 	p.TenantID = tenantID
 	p.Subsite = normalizeSubsite(p.Subsite)
 	if err := p.Validate(); err != nil {
 		return err
 	}
-	err := scanPage(s.pool.QueryRow(ctx, `
+	err := scanPage(q.QueryRow(ctx, `
 		UPDATE pages
 		SET subsite = $3, path = $4, title = $5, body_html = $6, body_blocks = $7,
 			status = $8, template_id = NULLIF($9, ''), publish_at = $10, unpublish_at = $11,
 			version = version + 1, updated_at = now()
-		WHERE tenant_id = $1 AND id = $2
+		WHERE tenant_id = $1 AND id = $2 AND version = $12
 		RETURNING id, tenant_id, COALESCE(subsite, ''), path, title, COALESCE(body_html, ''),
 			body_blocks, status, COALESCE(template_id, ''), publish_at, unpublish_at,
 			version, created_at, updated_at
-	`, tenantID, p.ID, p.Subsite, p.Path, p.Title, p.BodyHTML, nullableJSON(p.BodyBlocks), p.Status, p.TemplateID, nullableTime(p.PublishAt), nullableTime(p.UnpublishAt)), p)
+	`, tenantID, p.ID, p.Subsite, p.Path, p.Title, p.BodyHTML, nullableJSON(p.BodyBlocks), p.Status, p.TemplateID, nullableTime(p.PublishAt), nullableTime(p.UnpublishAt), p.Version), p)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return store.ErrNotFound
+		return pageMiss(ctx, q, tenantID, p.ID)
 	}
 	if isPGCode(err, pgUniqueViolation) {
 		return store.ErrPathConflict
@@ -321,14 +356,32 @@ func (s *Store) Update(ctx context.Context, tenantID int64, p *store.Page) error
 	return err
 }
 
-// Delete removes a tenant-scoped page.
-func (s *Store) Delete(ctx context.Context, tenantID int64, id int64) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM pages WHERE tenant_id = $1 AND id = $2`, tenantID, id)
+// Delete requires the caller's loaded version and serializes with batches.
+func (s *Store) Delete(ctx context.Context, tenantID int64, id int64, expectedVersion int) error {
+	tx, err := s.pageTransaction(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err = deletePage(ctx, tx, tenantID, id, expectedVersion); err != nil {
+		return err
+	}
+	if _, err = advanceRevision(ctx, tx, tenantID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func deletePage(ctx context.Context, q pageQueries, tenantID, id int64, expectedVersion int) error {
+	if expectedVersion <= 0 {
+		return store.ErrVersionConflict
+	}
+	tag, err := q.Exec(ctx, `DELETE FROM pages WHERE tenant_id=$1 AND id=$2 AND version=$3`, tenantID, id, expectedVersion)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
+		return pageMiss(ctx, q, tenantID, id)
 	}
 	return nil
 }

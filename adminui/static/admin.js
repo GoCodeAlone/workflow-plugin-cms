@@ -14,6 +14,10 @@ const api = {
     });
     if (!res.ok) {
       const text = await res.text();
+      if (res.status === 409) {
+        let error; try { error = JSON.parse(text); } catch {}
+        if (error?.error === "version_conflict") throw new Error("This page changed. Your draft is still here. Keep a copy of your changes, then reload to review the latest page before saving.");
+      }
       throw new Error(method + " " + path + " → " + res.status + ": " + text);
     }
     if (res.status === 204) return null;
@@ -29,7 +33,7 @@ const api = {
   getPage(tid, pid) { return this.req("GET", "/tenants/" + tid + "/pages/" + pid); },
   createPage(tid, b) { return this.req("POST", "/tenants/" + tid + "/pages", b); },
   updatePage(tid, pid, b) { return this.req("PUT", "/tenants/" + tid + "/pages/" + pid, b); },
-  deletePage(tid, pid) { return this.req("DELETE", "/tenants/" + tid + "/pages/" + pid); },
+  deletePage(tid, pid, version) { return this.req("DELETE", "/tenants/" + tid + "/pages/" + pid, {expected_version:version}); },
   permissions(tid, pid) { return this.req("GET", "/tenants/" + tid + "/pages/permissions" + (pid ? "?page_id="+pid : "")); },
   templates(tid) { return this.req("GET", "/tenants/" + tid + "/pages/templates"); },
   async preview(tid, body) {
@@ -121,7 +125,7 @@ async function applyView(route){
   const form=$("#page-editor-form");form.reset();pageField(form,"id").value=p.ID||"";
   for(const [field,key]of Object.entries({path:"Path",title:"Title",status:"Status",template_id:"TemplateID"}))pageField(form,field).value=p[key]|| (field==="status"?"draft":"");
   pageField(form,"publish_at").value=isoToDateTimeLocal(p.PublishAt);pageField(form,"unpublish_at").value=isoToDateTimeLocal(p.UnpublishAt);
-  const body=p.RenderedBodyHTML??p.BodyHTML??"";setRichEditorHTML(form,body);savedPageBodies.set(form,{html:body,blocks:p.BodyBlocks});pagePermissions=permissions;draftKey=pageKey(route);baselineDraft=JSON.stringify(pagePayload(form));
+  const body=p.RenderedBodyHTML??p.BodyHTML??"";setRichEditorHTML(form,body);savedPageBodies.set(form,{html:body,blocks:p.BodyBlocks,version:p.Version});pagePermissions=permissions;draftKey=pageKey(route);baselineDraft=JSON.stringify(pagePayload(form));
   $("#page-templates").replaceChildren(...(templates.templates||[]).map(name=>new Option(name,name)));
   $("#editor-tenant").textContent=(tenant.Label||tenant.Slug)+" · "+tenant.Slug;$("#editor-title").textContent=p.Title||"New page";
   const pages=$("#pages-link");pages.dataset.route="/tenants/"+tenant.ID+"/pages";pages.href=cmsBase+pages.dataset.route;
@@ -497,14 +501,14 @@ document.addEventListener("DOMContentLoaded",()=>{
    if(!form.checkValidity()){await navigate(pagePath(route,"publishing"));form.reportValidity();return}
    const payload=pagePayload(form);saving=true;freezeDraft(true);$("#btn-save-page").disabled=true;updateSaveState();
    try{
-    const saved=route.pid==="new"?await api.createPage(tid,payload):await api.updatePage(tid,route.pid,payload);
+    const saved=route.pid==="new"?await api.createPage(tid,payload):await api.updatePage(tid,route.pid,{...payload,expected_version:savedPageBodies.get(form)?.version});
     if(key!==draftKey||tid!==currentTenant?.ID||generation!==navigationGeneration)return;
-    savedPageBodies.set(form,{html:payload.body_html,blocks:payload.body_blocks});baselineDraft=JSON.stringify(payload);$("#editor-title").textContent=payload.title;toast("Page saved", "ok");
+    savedPageBodies.set(form,{html:payload.body_html,blocks:payload.body_blocks,version:saved.Version});baselineDraft=JSON.stringify(payload);$("#editor-title").textContent=payload.title;toast("Page saved", "ok");
     if(route.pid==="new"){freezeDraft(false);saving=false;discardDraft();await navigate("/tenants/"+tid+"/pages/"+saved.ID+"/content",true)}
    }catch(e){if(key===draftKey&&generation===navigationGeneration)fail(e)}finally{freezeDraft(false);saving=false;$("#btn-save-page").disabled=false;updateSaveState()}
   };
   $("#btn-page-preview").onclick=()=>refreshPreview().catch(fail);
-  $("#btn-delete-page").onclick=async()=>{if(saving||!pagePermissions.delete||!confirm("Delete this page?"))return;const tid=currentTenant.ID,pid=currentRoute.pid; saving=true;try{await api.deletePage(tid,pid);discardDraft();saving=false;await navigate("/tenants/"+tid+"/pages")}catch(e){fail(e)}finally{saving=false;updateSaveState()}};
+  $("#btn-delete-page").onclick=async()=>{if(saving||!pagePermissions.delete||!confirm("Delete this page?"))return;const tid=currentTenant.ID,pid=currentRoute.pid; saving=true;try{await api.deletePage(tid,pid,savedPageBodies.get($("#page-editor-form"))?.version);discardDraft();saving=false;await navigate("/tenants/"+tid+"/pages")}catch(e){fail(e)}finally{saving=false;updateSaveState()}};
  }else{
   $("#new-tenant-form").onsubmit=async ev=>{ev.preventDefault();const fd=new FormData(ev.target);try{await api.createTenant({slug:fd.get("slug"),label:fd.get("label"),theme_id:fd.get("theme_id")});ev.target.reset();toast("Tenant created","ok");await navigate("/tenants")}catch(e){fail(e)}};
   $("#new-domain-form").onsubmit=async ev=>{ev.preventDefault();const tid=currentTenant.ID,generation=navigationGeneration,fd=new FormData(ev.target);try{await api.createDomain(tid,{host:fd.get("host"),subsite_label:fd.get("subsite_label"),kind:fd.get("kind")});if(generation!==navigationGeneration)return;ev.target.reset();toast("Domain added","ok");await refreshDomains(tid,generation)}catch(e){fail(e)}};

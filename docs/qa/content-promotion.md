@@ -24,6 +24,7 @@ each schema is cleaned by its test. No runtime tables, processes or ports change
 | Canonical blocks → references | Internal/relative/anchor/mail/HTTPS links export through the actual renderer; arbitrary slash text is preserved; absolute/encoded admin/API/media references refuse |
 | Receipt → rollback | Content restored with increasing versions; created page removed; deleted page restored; later edit refuses whole rollback |
 | Bundle → validator | Changed bytes, missing assets, static homepage shadow, symlink, admin reference and encoded tenant-upload references refused |
+| HTML resource surfaces → validator | Page bodies, templates and bundled HTML refuse nested `srcdoc`, object/plugin embeddings and private resource/form overrides; public HTTPS iframe sources and verified local overrides remain usable |
 | Actual Chrome editor → API → Postgres | Repeated saves send versions 1/2; fixture promotion changes version to 4; stale save/delete send 3 and return 409; unsaved draft retained; reload then version-4 save persists as version 5; wrong tenant returns 403 |
 
 The browser test launches an ephemeral loopback test server and a temporary

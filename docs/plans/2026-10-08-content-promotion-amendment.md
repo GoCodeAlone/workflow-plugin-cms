@@ -78,3 +78,14 @@ replacing every older writer: mixed old/new plugin versions would bypass the
 ledger. A new store instance against the same isolated database must retain the
 rollback/replay guard. Canonical block links, absolute reference exclusions and
 collision-free temporary paths receive regression coverage in the same correction.
+
+## Independent-review correction: nested HTML resources
+
+The full `afc9dc9` review found unchecked nested/resource HTML attributes.
+Preparation now refuses inline nested documents and object/plugin embeddings,
+validates form override URLs and the other supported resource attributes, and
+refuses unsupported document base/refresh overrides. Regressions exercise page
+bodies, selected CMS templates and bundled HTML, including private upload/API
+URLs. Public HTTPS iframe sources and validated form overrides remain supported.
+This does not add a general active-content sandbox or change the host publication
+gates, schema prerequisite, consumer pins or approval boundary.

@@ -46,6 +46,14 @@ references and exact hashes. The operator must stage those verified immutable
 bytes in the target bundle. The library does not configure media storage, copy
 uploaded objects, fetch third-party embeds or claim rights to external media.
 
+HTML checks cover page bodies, CMS templates and bundled HTML. Inline nested
+documents (`srcdoc`), object/plugin embeddings (`object`, `embed`), reference base
+overrides and meta refresh are unsupported and refuse validation. Public HTTPS
+iframe sources remain supported; form action/override URLs, image source sets
+and other resource attributes use the same private-path and asset checks.
+This is reference validation, not a JavaScript sandbox. The host must review the
+exact approved bundle's scripts and runtime behavior separately.
+
 The SQL prerequisite `store/postgres/migrations/0001_page_content_revision.up.sql`
 must be reviewed and applied by the host before adoption. It initializes tenant
 content scopes/revisions and new-tenant initialization. This library never applies

@@ -194,16 +194,44 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		}
 		var visit func(*html.Node) error
 		visit = func(n *html.Node) error {
-			if n.Type == html.ElementNode && n.Data == "base" {
-				return ErrBundle
+			if n.Type == html.ElementNode {
+				switch n.Data {
+				case "base", "object", "embed":
+					// These elements can change reference resolution or load
+					// nested/plugin documents outside the checked HTML tree.
+					return ErrBundle
+				}
 			}
 			for _, a := range n.Attr {
 				switch a.Key {
-				case "href", "src", "poster", "action":
+				case "srcdoc", "xml:base":
+					// srcdoc is decoded into an attribute value, not visited
+					// children. Nested inline documents and XML reference
+					// base overrides are unsupported.
+					return ErrBundle
+				case "base":
+					if a.Namespace == "xml" {
+						return ErrBundle
+					}
+				case "http-equiv":
+					if n.Data == "meta" && strings.EqualFold(strings.TrimSpace(a.Val), "refresh") {
+						return ErrBundle
+					}
+				case "href", "src", "poster", "action", "formaction", "background", "manifest":
 					if err := checkRef(a.Val, base, a.Key == "href"); err != nil {
 						return err
 					}
-				case "srcset":
+				case "cite", "longdesc":
+					if err := checkRef(a.Val, base, true); err != nil {
+						return err
+					}
+				case "ping":
+					for _, ref := range strings.Fields(a.Val) {
+						if err := checkRef(ref, base, false); err != nil {
+							return err
+						}
+					}
+				case "srcset", "imagesrcset":
 					for _, ref := range strings.Split(a.Val, ",") {
 						parts := strings.Fields(ref)
 						if len(parts) == 0 {

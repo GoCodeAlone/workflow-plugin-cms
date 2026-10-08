@@ -197,3 +197,85 @@ func TestCanonicalBlockLinksUseActualRendererSemantics(t *testing.T) {
 		}
 	}
 }
+
+func TestBundleHTMLResourceSurfacesRefusePrivateAndNestedDocuments(t *testing.T) {
+	cases := []struct {
+		name string
+		html string
+	}{
+		{"iframe-srcdoc-upload", `<iframe srcdoc="&lt;img src='https://example.com/media/10/hash.jpg'&gt;"></iframe>`},
+		{"iframe-srcdoc-api", `<iframe srcdoc="&lt;img src='https://admin.gocodealone.tech/api/private'&gt;"></iframe>`},
+		{"iframe-srcdoc-nested", `<iframe srcdoc="&lt;iframe srcdoc=&quot;&amp;lt;img src='https://example.com/admin'&amp;gt;&quot;&gt;&lt;/iframe&gt;"></iframe>`},
+		{"iframe-srcdoc-public-unsupported", `<iframe srcdoc="&lt;p&gt;Public nested document&lt;/p&gt;"></iframe>`},
+		{"object-upload", `<object data="https://example.com/media/10/hash.jpg"></object>`},
+		{"object-api", `<object data="https://admin.gocodealone.tech/api/private"></object>`},
+		{"object-bundle-unsupported", `<object data="/assets/photo.jpg"></object>`},
+		{"embed-admin", `<embed src="https://example.com/admin/private">`},
+		{"formaction-upload", `<form action="https://example.com/contact"><button formaction="https://example.com/media/10/hash.jpg">Submit</button></form>`},
+		{"formaction-api", `<input type="submit" formaction="https://admin.gocodealone.tech/api/private">`},
+		{"formaction-admin", `<button formaction="https://example.com/admin">Submit</button>`},
+		{"formaction-encoded-api", `<button formaction="https://example.com/%61pi/private">Submit</button>`},
+		{"formaction-relative-upload", `<button formaction="/media/10/hash.jpg">Submit</button>`},
+		{"formaction-missing-local", `<button formaction="/assets/missing.html">Submit</button>`},
+		{"meta-refresh-unsupported", `<meta http-equiv=" Refresh " content="0; url=https://example.com/api/private">`},
+		{"svg-xml-base", `<svg xml:base="https://example.com/media/10/"><image href="/assets/photo.jpg"></image></svg>`},
+		{"imagesrcset-upload", `<link rel="preload" as="image" imagesrcset="/assets/photo.jpg 1x, https://example.com/media/10/hash.jpg 2x">`},
+		{"ping-api", `<a href="/" ping="https://example.com/audit https://example.com/api/private">Home</a>`},
+		{"legacy-background-upload", `<table background="https://example.com/media/10/hash.jpg"></table>`},
+		{"document-manifest-admin", `<html manifest="https://example.com/admin/private"></html>`},
+		{"longdesc-api", `<img src="/assets/photo.jpg" longdesc="https://example.com/api/private">`},
+		{"cite-admin", `<blockquote cite="https://example.com/admin/private">Text</blockquote>`},
+	}
+	for _, surface := range []string{"page-body", "cms-template", "static-html"} {
+		t.Run(surface, func(t *testing.T) {
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					s, root, _, _ := fixture(t)
+					p := s.Pages[0].Content
+					switch surface {
+					case "page-body":
+						p.BodyHTML = tc.html
+					case "cms-template":
+						if err := os.WriteFile(filepath.Join(root, "cms/templates/main.html"), []byte(tc.html+`<main><!--cms:body--></main>`), 0600); err != nil {
+							t.Fatal(err)
+						}
+					case "static-html":
+						if err := os.WriteFile(filepath.Join(root, "resource.html"), []byte(tc.html), 0600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					manifest, err := InventoryBundle(root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := VerifyBundle(root, manifest, []store.PageContent{p}); err != ErrBundle {
+						t.Fatalf("unsupported HTML resource surface accepted: %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestBundleSupportedEmbedsAndResourceOverridesRemainUsable(t *testing.T) {
+	s, root, _, _ := fixture(t)
+	p := s.Pages[0].Content
+	p.BodyHTML = `<meta charset="utf-8">
+<iframe src="https://www.youtube.com/embed/public-video" title="Public performance"></iframe>
+<form action="https://example.com/contact"><button formaction="https://example.com/contact/voice">Submit</button></form>
+<button formaction="/assets/submit.html">Local submit</button>
+<img src="/assets/photo.jpg" srcset="/assets/photo.jpg 1x, https://example.com/photos/owned.jpg 2x" longdesc="/">
+<link rel="preload" as="image" imagesrcset="/assets/photo.jpg 1x">
+<a href="/" ping="https://example.com/audit https://example.com/audit/second">Home</a>
+<blockquote cite="https://example.com/music">Text</blockquote>`
+	if err := os.WriteFile(filepath.Join(root, "assets/submit.html"), []byte(`<p>Submission endpoint fixture</p>`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := InventoryBundle(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = VerifyBundle(root, manifest, []store.PageContent{p}); err != nil {
+		t.Fatalf("supported public embed or validated resource override refused: %v", err)
+	}
+}

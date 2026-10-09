@@ -61,7 +61,7 @@ func (s Snapshot) Validate() error {
 			return ErrInvalid
 		}
 		keys[p.Key] = true
-		if err := p.Content.Validate(); err != nil {
+		if !publicPageContent(p.Content) {
 			return ErrInvalid
 		}
 		key := p.Content.Subsite + "\x00" + p.Content.Path

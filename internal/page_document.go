@@ -4,12 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
 )
+
+// Tenant template admission is shared by runtime resolution and bundle import.
+const MaxTenantTemplateBytes = 1 << 20
+
+var tenantTemplateID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+
+func ValidTenantTemplateID(id string) bool { return tenantTemplateID.MatchString(id) }
 
 const cmsBodySlot = "<!--cms:body-->"
 

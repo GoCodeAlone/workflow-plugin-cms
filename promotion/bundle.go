@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -109,8 +108,6 @@ func InventoryBundle(root string) (BundleManifest, error) {
 	return m, nil
 }
 
-var cssReferences = regexp.MustCompile(`(?i)url\(\s*["']?([^\s"')]+)["']?\s*\)|@import\s+["']([^"']+)["']`)
-
 // VerifyBundle re-hashes the supplied directory, validates local references and
 // rejects exact static route shadowing. Uploaded tenant media and admin paths
 // remain unsupported; copying their URLs would leak review tenant identity.
@@ -125,7 +122,7 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		files["/"+f.Path] = true
 	}
 	for _, p := range pages {
-		if p.Validate() != nil {
+		if !publicPageContent(p) {
 			return ErrBundle
 		}
 		routes[p.Path] = true
@@ -136,7 +133,7 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		if files["/"+exact] {
 			return ErrBundle
 		}
-		if p.TemplateID != "" && (!cleanFile(p.TemplateID) || strings.Contains(p.TemplateID, "/") || !files["/cms/templates/"+p.TemplateID+".html"]) {
+		if p.TemplateID != "" && (!cms.ValidTenantTemplateID(p.TemplateID) || !files["/cms/templates/"+p.TemplateID+".html"]) {
 			return ErrBundle
 		}
 	}
@@ -153,6 +150,11 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		}
 		u, err := url.Parse(raw)
 		if err != nil || u.User != nil {
+			return ErrBundle
+		}
+		// Unselected shells have no public page base yet. Require explicit
+		// root-relative or external references rather than guessing a base.
+		if base == "" && u.Scheme == "" && !strings.HasPrefix(u.Path, "/") {
 			return ErrBundle
 		}
 		if strings.ContainsAny(u.Path, "\\\x00") {
@@ -188,22 +190,9 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		return ErrBundle
 	}
 	checkCSS := func(css, base string) error {
-		for _, m := range cssReferences.FindAllStringSubmatch(css, -1) {
-			ref := m[1]
-			if ref == "" {
-				ref = m[2]
-			}
-			if err := checkRef(ref, base, resourceReference); err != nil {
-				return err
-			}
-		}
-		return nil
+		return verifyCSSReferences(css, func(ref string) error { return checkRef(ref, base, resourceReference) })
 	}
 	checkHTML := func(source, base string) error {
-		doc, err := html.Parse(strings.NewReader(source))
-		if err != nil {
-			return ErrBundle
-		}
 		var visit func(*html.Node) error
 		visit = func(n *html.Node) error {
 			if n.Type == html.ElementNode {
@@ -279,7 +268,18 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 			}
 			return nil
 		}
-		return visit(doc)
+		// Both browser modes matter: noscript is raw text with scripting
+		// enabled, and ordinary fallback markup with scripting disabled.
+		for _, scripting := range []bool{true, false} {
+			doc, err := html.ParseWithOptions(strings.NewReader(source), html.ParseOptionEnableScripting(scripting))
+			if err != nil {
+				return ErrBundle
+			}
+			if err := visit(doc); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	for _, p := range pages {
 		canonical, err := cms.RenderPageBody(p.Page(1, 1, 1))
@@ -334,26 +334,35 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		}
 	}
 	for _, f := range manifest.Files {
-		if strings.HasSuffix(f.Path, ".css") || strings.HasSuffix(f.Path, ".html") {
+		ext := strings.ToLower(path.Ext(f.Path))
+		if ext == ".css" || ext == ".html" || ext == ".htm" {
 			b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(f.Path)))
 			if err != nil {
 				return ErrBundle
 			}
-			if strings.HasSuffix(f.Path, ".css") {
+			if ext == ".css" {
 				if err := checkCSS(string(b), "/"+f.Path); err != nil {
 					return err
 				}
 			} else {
-				if strings.HasPrefix(f.Path, "cms/templates/") && strings.Count(string(b), "<!--cms:body-->") != 1 {
-					return ErrBundle
-				}
 				// Shell relative references are interpreted at public page paths.
 				if strings.HasPrefix(f.Path, "cms/templates/") {
+					name := strings.TrimSuffix(path.Base(f.Path), ".html")
+					if !cms.ValidTenantTemplateID(name) || path.Dir(f.Path) != "cms/templates" || f.Size > cms.MaxTenantTemplateBytes || strings.Count(string(b), "<!--cms:body-->") != 1 {
+						return ErrBundle
+					}
+					selected := false
 					for _, p := range pages {
 						if p.TemplateID+".html" == path.Base(f.Path) {
+							selected = true
 							if err := checkHTML(string(b), p.Path); err != nil {
 								return err
 							}
+						}
+					}
+					if !selected {
+						if err := checkHTML(string(b), ""); err != nil {
+							return err
 						}
 					}
 				} else if err := checkHTML(string(b), "/"+f.Path); err != nil {
@@ -372,4 +381,9 @@ func forbiddenPath(p string) bool {
 		}
 	}
 	return false
+}
+
+func publicPageContent(p store.PageContent) bool {
+	decoded, err := url.PathUnescape(p.Path)
+	return p.Validate() == nil && err == nil && decoded == p.Path && p.Path != "/healthz" && !strings.HasPrefix(p.Path, "/admin") && (!forbiddenPath(p.Path) || p.Path == "/media") && (p.TemplateID == "" || cms.ValidTenantTemplateID(p.TemplateID))
 }

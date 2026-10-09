@@ -15,14 +15,13 @@ import (
 	"strings"
 )
 
-var templateIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 var tenantSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 func (s *Server) resolveTenantTemplate(ctx context.Context, id int64, name string) (internal.PageTemplate, error) {
 	if name == "" {
 		return internal.PageTemplate{}, nil
 	}
-	if !templateIDPattern.MatchString(name) {
+	if !internal.ValidTenantTemplateID(name) {
 		return internal.PageTemplate{}, errors.New("invalid template")
 	}
 	if s.cfg.TenantsAdmin == nil {
@@ -51,8 +50,8 @@ func (s *Server) resolveTenantTemplate(ctx context.Context, id int64, name strin
 		return internal.PageTemplate{}, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
-	if err != nil || len(data) > 1<<20 || strings.Count(string(data), "<!--cms:body-->") != 1 {
+	data, err := io.ReadAll(io.LimitReader(file, internal.MaxTenantTemplateBytes+1))
+	if err != nil || len(data) > internal.MaxTenantTemplateBytes || strings.Count(string(data), "<!--cms:body-->") != 1 {
 		return internal.PageTemplate{}, errors.New("invalid template shell")
 	}
 	return internal.PageTemplate{ID: name, HTML: string(data)}, nil
@@ -71,14 +70,14 @@ func (s *Server) listTenantTemplates(ctx context.Context, id int64) ([]string, e
 	}
 	for _, e := range entries {
 		name := strings.TrimSuffix(e.Name(), ".html")
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".html") && templateIDPattern.MatchString(name) {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".html") && internal.ValidTenantTemplateID(name) {
 			if _, err := s.resolveTenantTemplate(ctx, id, name); err == nil {
 				names = append(names, name)
 			}
 		}
 	}
 	for name := range s.cfg.PageTemplates {
-		if templateIDPattern.MatchString(name) {
+		if internal.ValidTenantTemplateID(name) {
 			names = append(names, name)
 		}
 	}

@@ -51,6 +51,18 @@ documents (`srcdoc`), object/plugin embeddings (`object`, `embed`), reference ba
 overrides and meta refresh are unsupported and refuse validation. Public HTTPS
 iframe sources remain supported; form action/override URLs, image source sets
 and other resource attributes use the same private-path and asset checks.
+Both scripting modes are inspected, including `noscript` fallback resources.
+Stylesheet and HTML extensions are matched without case sensitivity. Every
+imported shell is checked, including shells not selected by the snapshot;
+unselected shells require root-relative or public external references because
+their eventual public page base is unknown. Template identifiers and the 1 MiB
+shell limit share the runtime resolver's admission rules. Host-reserved page
+routes and encoded path aliases are refused during snapshot validation.
+CSS accepts ordinary `url()` and quoted or URL imports. CSS escapes and the
+alternative string-image functions `image()`, `image-set()`,
+`-webkit-image-set()` and `src()` are unsupported and fail closed. Comments and
+ordinary text/font strings remain supported; no new CSS parser dependency is
+installed.
 This is reference validation, not a JavaScript sandbox. The host must review the
 exact approved bundle's scripts and runtime behavior separately.
 

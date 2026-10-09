@@ -118,11 +118,12 @@ type MemoryPageStore struct {
 	pages     map[int64]*Page // by ID
 	revisions map[int64]int64
 	scopes    map[int64]string
+	history   map[int64][]PageHistoryEntry
 }
 
 // NewMemoryPageStore returns an empty in-memory store.
 func NewMemoryPageStore() *MemoryPageStore {
-	return &MemoryPageStore{pages: map[int64]*Page{}, revisions: map[int64]int64{}, scopes: map[int64]string{}}
+	return &MemoryPageStore{pages: map[int64]*Page{}, revisions: map[int64]int64{}, scopes: map[int64]string{}, history: map[int64][]PageHistoryEntry{}}
 }
 
 func (s *MemoryPageStore) scopeLocked(tenantID int64) string {
@@ -134,7 +135,7 @@ func (s *MemoryPageStore) scopeLocked(tenantID int64) string {
 
 // Create inserts the page. Returns ErrPathConflict if (tenant, subsite,
 // path) is already taken.
-func (s *MemoryPageStore) Create(_ context.Context, tenantID int64, p *Page) error {
+func (s *MemoryPageStore) Create(ctx context.Context, tenantID int64, p *Page) error {
 	if p == nil {
 		return errors.New("page: nil")
 	}
@@ -163,6 +164,7 @@ func (s *MemoryPageStore) Create(_ context.Context, tenantID int64, p *Page) err
 	s.pages[p.ID] = &cp
 	s.scopeLocked(tenantID)
 	s.revisions[tenantID]++
+	s.recordHistoryLocked(ctx, tenantID, "create", nil, States([]*Page{&cp}))
 	return nil
 }
 
@@ -198,7 +200,7 @@ func (s *MemoryPageStore) GetByPath(_ context.Context, tenantID int64, subsite, 
 
 // Update writes the page. Returns ErrNotFound if no record matches
 // (tenant_id, id). Bumps Version + UpdatedAt.
-func (s *MemoryPageStore) Update(_ context.Context, tenantID int64, p *Page) error {
+func (s *MemoryPageStore) Update(ctx context.Context, tenantID int64, p *Page) error {
 	if p == nil {
 		return errors.New("page: nil")
 	}
@@ -229,11 +231,12 @@ func (s *MemoryPageStore) Update(_ context.Context, tenantID int64, p *Page) err
 	s.pages[p.ID] = &cp
 	s.scopeLocked(tenantID)
 	s.revisions[tenantID]++
+	s.recordHistoryLocked(ctx, tenantID, "update", States([]*Page{existing}), States([]*Page{&cp}))
 	return nil
 }
 
 // Delete removes the page. ErrNotFound on miss / wrong tenant.
-func (s *MemoryPageStore) Delete(_ context.Context, tenantID, id int64, expectedVersion int) error {
+func (s *MemoryPageStore) Delete(ctx context.Context, tenantID, id int64, expectedVersion int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	existing, ok := s.pages[id]
@@ -246,6 +249,7 @@ func (s *MemoryPageStore) Delete(_ context.Context, tenantID, id int64, expected
 	delete(s.pages, id)
 	s.scopeLocked(tenantID)
 	s.revisions[tenantID]++
+	s.recordHistoryLocked(ctx, tenantID, "delete", States([]*Page{existing}), nil)
 	return nil
 }
 

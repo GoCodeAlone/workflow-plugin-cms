@@ -120,6 +120,11 @@ including `body_blocks`, `template_id`, `publish_at`, and `unpublish_at`.
 `body_blocks` is the canonical editor document when present; `body_html` remains
 the backward-compatible fallback for older pages.
 
+Saved write history and optimistic save/delete preconditions are documented in
+[Saved page history](docs/saved-page-history.md). Adoption requires both explicit
+plugin SQL prerequisites and matched host schema/authorization support. It does
+not reconstruct earlier edits or unsaved browser drafts.
+
 ## Install
 
 ```yaml

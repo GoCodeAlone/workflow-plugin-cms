@@ -195,6 +195,14 @@ func (s *Store) applyBatch(ctx context.Context, tenantID int64, batch store.Page
 	if err != nil {
 		return store.PageBatchReceipt{}, err
 	}
+	old, saved := store.ChangedPageStates(result.Before, result.After)
+	operation := "batch.apply"
+	if restore {
+		operation = "batch.rollback"
+	}
+	if err := appendPageHistory(ctx, tx, tenantID, result.AfterRevision, operation, old, saved); err != nil {
+		return store.PageBatchReceipt{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return store.PageBatchReceipt{}, store.ErrBatchInvalid
 	}

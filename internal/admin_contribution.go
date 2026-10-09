@@ -47,10 +47,11 @@ func CMSAdminContributionMetadata(authorized bool) map[string]string {
 		return map[string]string{}
 	}
 	return map[string]string{
-		"sites_path":       "/api/v1/admin/tenants",
-		"pages_path":       "/api/v1/admin/tenants/{tenant_id}/pages",
-		"templates_path":   "/api/v1/admin/tenants/{tenant_id}/templates",
-		"overlays_path":    "/api/v1/admin/tenants/{tenant_id}/overlays",
-		"launch_edit_path": "/api/v1/admin/tenants/{tenant_id}/edit-session",
+		"sites_path":        "/api/v1/admin/tenants",
+		"pages_path":        "/api/v1/admin/tenants/{tenant_id}/pages",
+		"page_history_path": "/api/v1/admin/tenants/{tenant_id}/pages/history",
+		"templates_path":    "/api/v1/admin/tenants/{tenant_id}/templates",
+		"overlays_path":     "/api/v1/admin/tenants/{tenant_id}/overlays",
+		"launch_edit_path":  "/api/v1/admin/tenants/{tenant_id}/edit-session",
 	}
 }

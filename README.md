@@ -112,6 +112,26 @@ API route metadata is returned only when the caller passes `authorized: true`.
 That keeps route discovery behind the host's authz check while preserving the
 strict protobuf contract declared in `plugin.contracts.json`.
 
+### Scoped access to private preview content
+
+Hosts may optionally set `hostpolicy.Config.PreviewAccess` to a
+`func(*http.Request, hostpolicy.Tenant) bool` that verifies scoped preview
+authority on every request. The host must verify its credential's audience,
+exact origin, tenant, exact content/asset path, and current grant. The plugin
+does not issue credentials or cache callback approvals.
+
+The callback is considered only after the existing HTTPS, current canonical
+domain ownership, and valid tenant password-hash checks, for tenants resolved
+with kind `preview`. Its ceiling allows only GET/HEAD with canonical unencoded
+content paths and no query or request body. API, admin, auth, internal, control,
+health, metrics, hidden paths and path aliases are excluded. It receives a
+request clone; changes to it cannot change the downstream target. An approval
+uses the same credential-stripping and private/no-store/noindex response path
+as human Basic access, and grants no CMS or platform authority. Basic requests
+always retain password verification. A nil callback or a denial retains the
+existing Basic challenge. Compose host policy outside every content wrapper;
+this optional callback does not replace the host's editor or API gates.
+
 ## Persistence and backup
 
 CMS page documents are durable application state. Operators backing this plugin

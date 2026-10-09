@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -43,6 +44,14 @@ type Config struct {
 	Resolve                 func(context.Context, string) (Tenant, bool)
 	TrustedProxies          []netip.Prefix
 	Transport               TransportMode
+	// PreviewAccess optionally verifies host-owned, scoped preview authority on
+	// every eligible request. It is considered only for protected preview tenants,
+	// after transport/canonical policy checks, for canonical content GET/HEAD
+	// targets without queries. Basic authentication and all privileged routes keep
+	// their existing gates. The callback must verify the exact origin, path, tenant,
+	// audience and current grant; it grants no CMS/admin authority. Nil or false
+	// preserves Basic authentication. Its request clone must not be retained.
+	PreviewAccess func(*http.Request, Tenant) bool
 }
 type success struct{ until time.Time }
 type attempts struct {
@@ -207,6 +216,10 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username, password, ok := r.BasicAuth()
+	if !ok && g.cfg.PreviewAccess != nil && previewAccessRequest(r, tenant) && g.cfg.PreviewAccess(r.Clone(r.Context()), tenant) {
+		g.servePrivate(private, r)
+		return
+	}
 	if !ok || username != tenant.Slug || len(password) == 0 || len(password) > 72 {
 		challenge(private)
 		return
@@ -261,6 +274,49 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	g.servePrivate(private, r)
+}
+
+// previewAccessRequest is a ceiling on the host callback, not a content
+// allowlist. In particular, encoded or normalized aliases must never turn an
+// approved content path into an application's control endpoint.
+func previewAccessRequest(r *http.Request, tenant Tenant) bool {
+	if tenant.Kind != "preview" || (r.Method != http.MethodGet && r.Method != http.MethodHead) || r.URL == nil ||
+		r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.RawPath != "" || r.URL.Fragment != "" || r.URL.RawFragment != "" ||
+		r.URL.Opaque != "" || r.URL.User != nil || r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+		return false
+	}
+	if values := r.Header.Values("Authorization"); len(values) > 1 {
+		return false
+	} else if len(values) == 1 {
+		fields := strings.Fields(values[0])
+		if len(fields) > 0 && strings.EqualFold(fields[0], "Basic") {
+			return false
+		}
+	}
+	target := r.URL.Path
+	if !strings.HasPrefix(target, "/") || strings.Contains(target, "//") || strings.ContainsAny(target, "\\%;") || r.URL.EscapedPath() != target {
+		return false
+	}
+	clean := path.Clean(target)
+	if clean != target && clean+"/" != target {
+		return false
+	}
+	for _, segment := range strings.Split(target, "/") {
+		if strings.HasPrefix(segment, ".") {
+			return false
+		}
+	}
+	lower := strings.ToLower(target)
+	for _, prefix := range []string{"/api", "/admin", "/auth", "/login", "/logout", "/register", "/oauth", "/__", "/internal", "/control", "/debug", "/healthz", "/readyz", "/livez", "/metrics"} {
+		if strings.HasPrefix(lower, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+func (g *Gate) servePrivate(private *privateWriter, r *http.Request) {
 	safe := r.Clone(r.Context())
 	safe.Header = r.Header.Clone()
 	safe.Header.Del("Authorization")
@@ -276,7 +332,7 @@ func (g *Gate) secure(r *http.Request) bool {
 	if g.cfg.Transport == TransportAppPlatformHTTPS {
 		// App Platform upgrades every external HTTP request before forwarding it
 		// to this HTTP listener. This explicit provider invariant says nothing
-		// about tenant authority: the protected Host still always needs Basic.
+		// about tenant authority: the protected Host still needs verified access.
 		return true
 	}
 	if r.TLS != nil {

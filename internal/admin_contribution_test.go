@@ -12,13 +12,14 @@ func TestCMSAdminContribution(t *testing.T) {
 		t.Fatalf("RenderMode = %q, want iframe", contribution.RenderMode)
 	}
 
+	if contribution.Metadata["domains_path"] != "" || stringSetContains(contribution.Permissions, "admin:multisite.sites:update") {
+		t.Fatal("content contribution exposes platform capabilities")
+	}
 	for _, permission := range []string{
 		"admin:multisite.sites:read",
-		"admin:multisite.sites:update",
 		"admin:multisite.pages:read",
 		"admin:multisite.pages:update",
 		"admin:multisite.publish:update",
-		"admin:multisite.onboarding:plan",
 	} {
 		if !stringSetContains(contribution.Permissions, permission) {
 			t.Fatalf("missing permission %q in %#v", permission, contribution.Permissions)
@@ -27,7 +28,6 @@ func TestCMSAdminContribution(t *testing.T) {
 
 	for _, key := range []string{
 		"sites_path",
-		"domains_path",
 		"pages_path",
 		"templates_path",
 		"overlays_path",

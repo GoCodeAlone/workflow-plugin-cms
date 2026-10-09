@@ -576,7 +576,7 @@ func TestServer_AdminHostRootServesAdminUIWhenAuthorized(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("admin root with auth: got %d body=%q, want 200", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Multisite Admin") {
+	if !strings.Contains(rec.Body.String(), "Site editor") {
 		t.Fatalf("admin root body = %q, want admin UI", rec.Body.String())
 	}
 }
@@ -630,7 +630,7 @@ func TestServer_AdminCreatedTenantResolvesStaticBundle(t *testing.T) {
 	if err := os.Symlink(versionDir, filepath.Join(root, "acme", "current")); err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{BundleRoot: root})
+	s := New(Config{AdminPlatformAccess: func(*http.Request) bool { return true }, BundleRoot: root})
 
 	rec := doReq(t, s, "POST", "/api/v1/admin/tenants", "application/json", strings.NewReader(`{"slug":"acme"}`))
 	if rec.Code != http.StatusCreated {
@@ -657,7 +657,7 @@ func TestServer_AdminCreatedTenantResolvesStaticBundle(t *testing.T) {
 
 func TestServer_AdminMutationsRecordAuditEntries(t *testing.T) {
 	sink := audit.NewMemorySink()
-	s := New(Config{
+	s := New(Config{AdminPlatformAccess: func(*http.Request) bool { return true },
 		AuditSignKey: "test-sign-key",
 		AuditSink:    sink,
 		AuditActor: func(r *http.Request) string {
@@ -705,7 +705,7 @@ func TestServer_AdminMutationsRecordAuditEntries(t *testing.T) {
 
 func TestServer_AutoPreviewDomainRecordsAuditEntry(t *testing.T) {
 	sink := audit.NewMemorySink()
-	s := New(Config{
+	s := New(Config{AdminPlatformAccess: func(*http.Request) bool { return true },
 		PreviewSubdomainBase: "preview.example",
 		AuditSignKey:         "test-sign-key",
 		AuditSink:            sink,
@@ -782,38 +782,35 @@ func TestServer_TenantResolver_DeepPreviewRejected(t *testing.T) {
 	}
 }
 
-func TestServer_AdminReload_FlushesCache(t *testing.T) {
+func TestServer_DomainMoveIsVisibleWithoutReload(t *testing.T) {
 	r := &stubResolver{
 		byHost: map[string]TenantInfo{
 			"acme.example": {TenantID: 7, TenantSlug: "acme"},
 		},
 	}
-	s := New(Config{TenantResolverStore: r})
+	s := New(Config{AdminPlatformAccess: func(*http.Request) bool { return true }, TenantResolverStore: r})
 
-	// Prime cache.
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Host = "acme.example"
-	s.ServeHTTP(httptest.NewRecorder(), req)
-	if _, ok := s.cached["acme.example"]; !ok {
-		t.Fatal("expected cache to be populated")
+	if tenant, ok := s.ResolveTenant(context.Background(), "acme.example"); !ok || tenant.TenantID != 7 {
+		t.Fatal("initial domain lookup failed")
+	}
+	r.byHost["acme.example"] = TenantInfo{TenantID: 8, TenantSlug: "beta"}
+	if tenant, ok := s.ResolveTenant(context.Background(), "acme.example"); !ok || tenant.TenantID != 8 {
+		t.Fatal("domain reassignment used stale tenant data")
 	}
 
 	// Reload.
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/reload", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/reload", nil)
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reload: %d", rec.Code)
-	}
-	if _, ok := s.cached["acme.example"]; ok {
-		t.Error("expected cache to be cleared after reload")
 	}
 }
 
 func TestServer_EndToEnd_TenantCreate_PreviewAutoProvision(t *testing.T) {
 	// Three-tenant integration: each tenant created via admin API
 	// gets a preview subdomain auto-provisioned. Verifies T16+T32+V18.
-	s := New(Config{PreviewSubdomainBase: "preview.gocodealone.com"})
+	s := New(Config{AdminPlatformAccess: func(*http.Request) bool { return true }, PreviewSubdomainBase: "preview.gocodealone.com"})
 
 	for _, slug := range []string{"acme", "beta", "gamma"} {
 		body, _ := json.Marshal(map[string]string{"slug": slug})

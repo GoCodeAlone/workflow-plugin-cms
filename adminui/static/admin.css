@@ -162,3 +162,43 @@ details summary { cursor: pointer; padding: 0.5rem 0; }
   border: 1px solid #ddd;
   background: white;
 }
+
+[data-event-tool] { display:grid; gap:.6rem; padding:1rem; border:1px solid #bbb; }
+[data-event-tool][hidden] { display:none; }
+[data-event-tool] label { display:grid; gap:.2rem; }
+[data-event-tool] input { font:inherit; padding:.5rem; width:100%; }
+button:focus-visible, a:focus-visible { outline:3px solid #154f9d; outline-offset:3px; }
+@media(max-width:640px) { body{padding:.6rem} section{padding:.8rem} form{display:block} form label{display:block;margin:.8rem 0} form .form-row{display:block} table{font-size:.85rem} th,td{padding:.4rem} header{gap:.5rem;flex-wrap:wrap} }
+/* Distinct workspaces and routed page panes. None of these view styles enter
+   the canonical content surface or saved HTML. */
+body { max-width: 1280px; background:#f5f6f8; color:#192638; padding:1.5rem 2rem; }
+[hidden] { display:none !important; }
+a { color:#1856a8; text-underline-offset:3px; }
+button, a { touch-action:manipulation; }
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible { outline:3px solid #2563b8; outline-offset:3px; }
+.app-header { margin-bottom:1.5rem; }
+.eyebrow { color:#4c6076; font-size:.78rem; font-weight:650; letter-spacing:.08em; text-transform:uppercase; margin:0 0 .4rem; }
+h1 { font-size:1.6rem; } h2 { margin-top:0; font-size:1.45rem; } h3 { margin-top:0; }
+.view { border:1px solid #dce2ea; padding:1.75rem; box-shadow:none; border-radius:12px; }
+.view-heading,.editor-heading { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:1.5rem; }
+#save-state { color:#4c6076; margin:.4rem 0 0; font-size:.875rem; }
+#page-tabs,.page-tabs { display:flex; flex-wrap:wrap; gap:.4rem; padding:.6rem 0; margin:0 0 1.5rem; border-bottom:1px solid #dce2ea; }
+#page-tabs a,.page-tabs a { padding:.65rem .85rem; border-radius:6px; text-decoration:none; color:#3c526d; font-weight:550; }
+#page-tabs a[aria-current],.page-tabs a[aria-current] { background:#e7eefb; color:#174985; }
+#page-editor-form { display:block; margin:0; }
+.settings-pane { max-width:640px; display:block; }
+.settings-pane label { display:block; font-weight:550; margin:1rem 0; }
+.settings-pane label input,.settings-pane label select { display:block; margin-top:.4rem; padding:.65rem; }
+.content-layout { display:grid; grid-template-columns:210px minmax(0,1fr); gap:1.5rem; }
+#section-tabs { display:flex; flex-direction:column; gap:.25rem; border-right:1px solid #dce2ea; padding-right:.8rem; }
+#section-tabs a { padding:.65rem .75rem; border-radius:6px; text-decoration:none; line-height:1.4; overflow-wrap:anywhere; }
+#section-tabs a[aria-current] { background:#e7eefb; color:#174985; font-weight:600; }
+.content-editor { min-width:0; }.content-editor .form-row { display:block; }.content-editor .rich-editor { display:grid; }
+.editor-surface { min-height:20rem; border-color:#bac7d7; padding:1rem; line-height:1.6; }
+.editor-surface section { padding:0; box-shadow:none; border:0; margin:0; background:none; }
+.editor-surface img { max-height:330px; object-fit:contain; }
+[data-editor-source] { width:100%; min-height:24rem; font:13px/1.55 ui-monospace,monospace; padding:1rem; border:1px solid #bac7d7; border-radius:6px; }
+[data-source-notice] { font-size:.875rem; color:#664300; background:#fff5db; padding:.8rem; border-radius:6px; }
+.table-wrap { overflow-x:auto; } th,td { padding:.8rem; }.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
+#page-preview { width:100%; min-height:650px; border:1px solid #dce2ea; margin-top:1rem; background:white; }
+@media(max-width:700px) { body { padding:1rem; }.view { padding:1rem; }.editor-heading,.view-heading { align-items:flex-start; flex-direction:column; }.content-layout { grid-template-columns:1fr; }#section-tabs { flex-direction:row; flex-wrap:wrap; border-right:0; border-bottom:1px solid #dce2ea; padding:0 0 .8rem; }#section-tabs a { font-size:.85rem; }.editor-surface { min-height:16rem; }#page-preview { min-height:550px; } }

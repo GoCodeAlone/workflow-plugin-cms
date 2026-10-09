@@ -14,7 +14,9 @@ import (
 )
 
 func newAdminTestAPI() *AdminAPI {
-	return NewAdminAPI(store.NewMemoryTenantAdminStore(), store.NewMemoryPageStore())
+	api := NewAdminAPI(store.NewMemoryTenantAdminStore(), store.NewMemoryPageStore())
+	api.PlatformAccess = func(*http.Request) bool { return true } // trusted unit fixture only
+	return api
 }
 
 func TestAdmin_PageTemplateAndScheduleFieldsPersist(t *testing.T) {

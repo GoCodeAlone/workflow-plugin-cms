@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/adminui"
@@ -57,6 +56,13 @@ type Config struct {
 	// wire this to workflow-plugin-auth session/JWT validation. When
 	// AdminHost is set and AdminAuth is nil, admin requests fail closed.
 	AdminAuth func(*http.Request) bool
+
+	// AdminTenantAccess adds membership enforcement after role authorization.
+	// Hosts with tenant editors must supply it; nil preserves legacy operator-only wiring.
+	AdminTenantAccess func(*http.Request, int64) bool
+	// AdminPlatformAccess is mandatory for tenant creation, domain reads/writes
+	// and global cache reload. Hosts must enforce durable platform authority.
+	AdminPlatformAccess func(*http.Request) bool
 
 	// OnIngest is called with the verified payload. Production wires
 	// this to a Fetcher; tests typically pass a no-op.
@@ -114,17 +120,14 @@ type TenantInfo = internal.TenantInfo
 
 // Server is the assembled multisite host.
 type Server struct {
-	cfg        Config
-	admin      *internal.AdminAPI
-	ingest     *bundle.IngestHandler
-	media      *media.UploadHandler
-	metrics    *requestCounters
-	audit      *audit.Logger
-	adminUI    http.Handler
-	adminRoot  http.Handler
-	mu         sync.RWMutex
-	cached     map[string]TenantInfo // host:lookup cache for the simple resolver
-	cachedSlug map[string]TenantInfo
+	cfg       Config
+	admin     *internal.AdminAPI
+	ingest    *bundle.IngestHandler
+	media     *media.UploadHandler
+	metrics   *requestCounters
+	audit     *audit.Logger
+	adminUI   http.Handler
+	adminRoot http.Handler
 }
 
 // New builds a Server. Fills in memory-backed defaults for nil stores.
@@ -139,16 +142,17 @@ func New(cfg Config) *Server {
 		cfg.Pages = store.NewMemoryPageStore()
 	}
 
-	s := &Server{
-		cfg:        cfg,
-		cached:     map[string]TenantInfo{},
-		cachedSlug: map[string]TenantInfo{},
-	}
+	s := &Server{cfg: cfg}
 
 	// AdminAPI exposes /api/v1/admin/*.
 	api := internal.NewAdminAPI(cfg.TenantsAdmin, cfg.Pages)
 	api.PreviewBase = cfg.PreviewSubdomainBase
 	api.ReloadFunc = s.flushCaches
+	api.TenantAccess = cfg.AdminTenantAccess
+	api.PlatformAccess = cfg.AdminPlatformAccess
+	api.RequestAccess = cfg.AdminAuth
+	api.ResolveTemplate = s.resolveTenantTemplate
+	api.ListTemplates = s.listTenantTemplates
 	s.admin = api
 
 	// IngestHandler exposes /api/v1/ingest/release.
@@ -183,13 +187,9 @@ func (s *Server) EmitMetrics(_ context.Context, recorder telemetry.MetricRecorde
 	return nil
 }
 
-// flushCaches clears the in-memory tenant lookup cache. Called by the
-// /api/v1/admin/reload endpoint (T31).
+// flushCaches preserves the reload API. Tenant routing now reads authoritative
+// store state on every request, so there is no host mapping cache to invalidate.
 func (s *Server) flushCaches() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.cached = map[string]TenantInfo{}
-	s.cachedSlug = map[string]TenantInfo{}
 	return nil
 }
 
@@ -232,20 +232,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Media upload route: POST /api/v1/admin/tenants/:id/upload.
 	if strings.HasPrefix(path, "/api/v1/admin/tenants/") && strings.HasSuffix(path, "/upload") {
+		tid := extractTenantIDFromPath(path)
+		if tid <= 0 || path != "/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/upload" {
+			http.NotFound(rec, r)
+			return
+		}
 		if !s.authorizeAdmin(rec, r, adminHost) {
+			return
+		}
+		if s.cfg.AdminTenantAccess != nil && !s.cfg.AdminTenantAccess(r, extractTenantIDFromPath(path)) {
+			http.Error(rec, "forbidden", http.StatusForbidden)
 			return
 		}
 		if s.media == nil {
 			http.Error(rec, "media backend not configured", http.StatusServiceUnavailable)
 			return
 		}
-		tid := extractTenantIDFromPath(path)
 		s.media.ServeForTenant(rec, r, tid)
 		return
 	}
 
 	if strings.HasPrefix(path, "/api/v1/admin/") || path == "/api/v1/admin" {
 		if !s.authorizeAdmin(rec, r, adminHost) {
+			return
+		}
+		if strings.Contains(path, "/pages/assets/") {
+			s.servePreviewAsset(rec, r)
 			return
 		}
 		s.admin.ServeHTTP(rec, r)
@@ -408,7 +420,15 @@ func (s *Server) serveCMSPage(w http.ResponseWriter, r *http.Request, tenant Ten
 			http.Error(w, "page lookup failed", http.StatusInternalServerError)
 			return true
 		}
-		html, rendered, err := internal.RenderPageDocument(p, s.pageTemplate(p.TemplateID), time.Now().UTC())
+		if !internal.PagePubliclyRenderable(p, time.Now().UTC()) {
+			return false
+		}
+		template, err := s.resolveTenantTemplate(r.Context(), tenant.TenantID, p.TemplateID)
+		if err != nil {
+			http.Error(w, "page template unavailable", http.StatusServiceUnavailable)
+			return true
+		}
+		html, rendered, err := internal.RenderPageDocument(p, template, time.Now().UTC())
 		if err != nil {
 			http.Error(w, "page render failed", http.StatusInternalServerError)
 			return true
@@ -447,7 +467,10 @@ func resolveBundlePath(bundleRoot, slug, urlPath string) (string, bool) {
 	if bundleRoot == "" || slug == "" {
 		return "", false
 	}
-	tenantRoot := filepath.Join(bundleRoot, slug, "current")
+	tenantRoot, err := tenantBundleRoot(bundleRoot, slug)
+	if err != nil {
+		return "", false
+	}
 	rel := strings.TrimPrefix(urlPath, "/")
 	if rel == "" || strings.HasSuffix(urlPath, "/") {
 		rel = filepath.Join(rel, "index.html")
@@ -461,13 +484,24 @@ func resolveBundlePath(bundleRoot, slug, urlPath string) (string, bool) {
 	if err != nil || strings.HasPrefix(relToRoot, "..") {
 		return "", false
 	}
-	return full, true
+	resolved, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return "", false
+	}
+	relToRoot, err = filepath.Rel(tenantRoot, resolved)
+	if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return resolved, true
 }
 
 // extractTenantIDFromPath parses /api/v1/admin/tenants/:id/upload →
 // :id. Returns 0 on parse failure (handler returns 400).
 func extractTenantIDFromPath(path string) int64 {
 	const prefix = "/api/v1/admin/tenants/"
+	if !strings.HasPrefix(path, prefix) {
+		return 0
+	}
 	rest := strings.TrimPrefix(path, prefix)
 	parts := strings.SplitN(rest, "/", 2)
 	if len(parts) == 0 {
@@ -490,48 +524,33 @@ func (s *Server) serveHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
-// resolveTenant uses the configured TenantResolverStore (if any) +
-// preview-subdomain fallback (if cfg.PreviewSubdomainBase set).
-//
-// Cached in-memory; flushed by /api/v1/admin/reload.
+// ResolveTenant uses authoritative domain/tenant lookup. Host-policy decisions
+// and public rendering share this lookup; an indefinitely cached mapping could
+// serve the wrong tenant after a domain move. Resolver stores may optimize reads.
+func (s *Server) ResolveTenant(ctx context.Context, host string) (TenantInfo, bool) {
+	return s.resolveTenant(ctx, host)
+}
+
 func (s *Server) resolveTenant(ctx context.Context, host string) (TenantInfo, bool) {
 	host = strings.ToLower(strings.Split(host, ":")[0])
-
-	s.mu.RLock()
-	if t, ok := s.cached[host]; ok {
-		s.mu.RUnlock()
-		return t, true
-	}
-	s.mu.RUnlock()
-
 	if s.cfg.TenantResolverStore != nil {
 		if t, ok := s.cfg.TenantResolverStore.Lookup(ctx, host); ok {
-			s.mu.Lock()
-			s.cached[host] = t
-			s.mu.Unlock()
 			return t, true
 		}
 	}
-
-	// Preview-subdomain fallback.
 	if s.cfg.PreviewSubdomainBase != "" {
 		base := strings.ToLower(strings.TrimPrefix(s.cfg.PreviewSubdomainBase, "."))
 		suffix := "." + base
 		if strings.HasSuffix(host, suffix) {
 			slug := strings.TrimSuffix(host, suffix)
-			if slug != "" && !strings.Contains(slug, ".") {
-				if s.cfg.TenantResolverStore != nil {
-					if t, ok := s.cfg.TenantResolverStore.LookupBySlug(ctx, slug); ok {
-						s.mu.Lock()
-						s.cachedSlug[slug] = t
-						s.mu.Unlock()
-						return t, true
-					}
+			if slug != "" && !strings.Contains(slug, ".") && s.cfg.TenantResolverStore != nil {
+				if t, ok := s.cfg.TenantResolverStore.LookupBySlug(ctx, slug); ok {
+					t.Kind = "preview"
+					return t, true
 				}
 			}
 		}
 	}
-
 	return TenantInfo{}, false
 }
 

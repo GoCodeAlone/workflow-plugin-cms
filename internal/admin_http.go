@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -32,12 +33,21 @@ import (
 // `<slug>.<preview_base>` domain row (V18 / T32). Empty disables
 // auto-provision.
 type AdminAPI struct {
-	tenants     store.TenantAdminStore
-	pages       store.PageStore
-	ReloadFunc  func() error
-	PreviewBase string
-	Audit       *audit.Logger
-	AuditActor  func(*http.Request) string
+	tenants      store.TenantAdminStore
+	pages        store.PageStore
+	ReloadFunc   func() error
+	PreviewBase  string
+	Audit        *audit.Logger
+	AuditActor   func(*http.Request) string
+	TenantAccess func(*http.Request, int64) bool
+	// PlatformAccess must authorize current platform authority, including reads.
+	// Missing configuration fails closed for global and domain administration.
+	PlatformAccess func(*http.Request) bool
+	// RequestAccess projects page permissions without dispatching a write and
+	// repeats the host's authorization inside this handler when configured.
+	RequestAccess   func(*http.Request) bool
+	ResolveTemplate func(context.Context, int64, string) (PageTemplate, error)
+	ListTemplates   func(context.Context, int64) ([]string, error)
 }
 
 // NewAdminAPI returns a handler using the given stores. Either store
@@ -49,55 +59,144 @@ func NewAdminAPI(tenants store.TenantAdminStore, pages store.PageStore) *AdminAP
 
 // ServeHTTP dispatches by method + path.
 func (a *AdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin")
-	switch {
-	case path == "/reload" && r.Method == http.MethodPost:
-		a.reload(w, r)
-
-	case path == "/tenants" && r.Method == http.MethodGet:
-		a.listTenants(w, r)
-	case path == "/tenants" && r.Method == http.MethodPost:
-		a.createTenant(w, r)
-
-	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/domains") && r.Method == http.MethodGet:
-		a.listDomains(w, r, extractTenantID(path))
-	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/domains") && r.Method == http.MethodPost:
-		a.createDomain(w, r, extractTenantID(path))
-	case strings.HasPrefix(path, "/tenants/") && strings.Contains(path, "/domains/") && r.Method == http.MethodDelete:
-		tid, did := extractTenantAndDomainID(path)
-		a.deleteDomain(w, r, tid, did)
-
-	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/pages") && r.Method == http.MethodGet:
-		a.listPages(w, r, extractTenantID(path))
-	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/pages") && r.Method == http.MethodPost:
-		a.createPage(w, r, extractTenantID(path))
-	case strings.HasPrefix(path, "/tenants/") && strings.Contains(path, "/pages/") && r.Method == http.MethodGet:
-		tid, pid := extractTenantAndPageID(path)
-		a.getPage(w, r, tid, pid)
-	case strings.HasPrefix(path, "/tenants/") && strings.Contains(path, "/pages/") && r.Method == http.MethodPut:
-		tid, pid := extractTenantAndPageID(path)
-		a.updatePage(w, r, tid, pid)
-	case strings.HasPrefix(path, "/tenants/") && strings.Contains(path, "/pages/") && r.Method == http.MethodDelete:
-		tid, pid := extractTenantAndPageID(path)
-		a.deletePage(w, r, tid, pid)
-
-	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/overlays/clone") && r.Method == http.MethodPost:
-		a.cloneOverlay(w, r, extractTenantID(path))
-	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/overlays/publish") && r.Method == http.MethodPut:
-		a.publishOverlay(w, r, extractTenantID(path))
-	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/overlays/disable") && r.Method == http.MethodPut:
-		a.disableOverlay(w, r, extractTenantID(path))
-
-	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/nav/published") && r.Method == http.MethodPost:
-		a.publishedNavigation(w, r, extractTenantID(path))
-	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/widgets/render") && r.Method == http.MethodPost:
-		a.renderWidget(w, r, extractTenantID(path))
-	case strings.HasPrefix(path, "/tenants/") && strings.HasSuffix(path, "/media/validate") && r.Method == http.MethodPost:
-		a.validateMedia(w, r, extractTenantID(path))
-
-	default:
-		writeJSONError(w, http.StatusNotFound, "not_found", "route not found")
+	route, tid, rid := parseAdminRoute(r.URL.Path)
+	if route == "" {
+		writeJSONError(w, 404, "not_found", "route not found")
+		return
 	}
+	platform := route == "/reload" || (route == "/tenants" && r.Method != http.MethodGet) || strings.HasPrefix(route, "/domains")
+	if platform && (a.PlatformAccess == nil || !a.PlatformAccess(r)) {
+		writeJSONError(w, 403, "forbidden", "platform access denied")
+		return
+	}
+	if a.RequestAccess != nil && !a.RequestAccess(r) {
+		writeJSONError(w, 403, "forbidden", "request access denied")
+		return
+	}
+	if tid > 0 && a.TenantAccess != nil && !a.TenantAccess(r, tid) {
+		writeJSONError(w, 403, "forbidden", "tenant access denied")
+		return
+	}
+	switch {
+	case route == "/reload" && r.Method == "POST":
+		a.reload(w, r)
+	case route == "/tenants" && r.Method == "GET":
+		a.listTenants(w, r)
+	case route == "/tenants" && r.Method == "POST":
+		a.createTenant(w, r)
+	case route == "/domains" && r.Method == "GET":
+		a.listDomains(w, r, tid)
+	case route == "/domains" && r.Method == "POST":
+		a.createDomain(w, r, tid)
+	case route == "/domains/id" && r.Method == "DELETE":
+		a.deleteDomain(w, r, tid, rid)
+	case route == "/pages" && r.Method == "GET":
+		a.listPages(w, r, tid)
+	case route == "/pages" && r.Method == "POST":
+		a.createPage(w, r, tid)
+	case route == "/pages/id" && r.Method == "GET":
+		a.getPage(w, r, tid, rid)
+	case route == "/pages/id" && r.Method == "PUT":
+		a.updatePage(w, r, tid, rid)
+	case route == "/pages/id" && r.Method == "DELETE":
+		a.deletePage(w, r, tid, rid)
+	case route == "/pages/preview" && r.Method == "POST":
+		a.previewPage(w, r, tid)
+	case route == "/pages/templates" && r.Method == "GET":
+		a.pageTemplates(w, r, tid)
+	case route == "/pages/permissions" && r.Method == "GET":
+		a.pagePermissions(w, r, tid)
+	case route == "/overlays/clone" && r.Method == "POST":
+		a.cloneOverlay(w, r, tid)
+	case route == "/overlays/publish" && r.Method == "PUT":
+		a.publishOverlay(w, r, tid)
+	case route == "/overlays/disable" && r.Method == "PUT":
+		a.disableOverlay(w, r, tid)
+	case route == "/nav/published" && r.Method == "POST":
+		a.publishedNavigation(w, r, tid)
+	case route == "/widgets/render" && r.Method == "POST":
+		a.renderWidget(w, r, tid)
+	case route == "/media/validate" && r.Method == "POST":
+		a.validateMedia(w, r, tid)
+	default:
+		writeJSONError(w, 404, "not_found", "route not found")
+	}
+}
+
+// Parse once: authorization and dispatch consume the same ID. No suffix routes,
+// repeated tenant/page segments, empty segments or noncanonical numeric IDs.
+func parseAdminRoute(path string) (route string, tid, rid int64) {
+	const prefix = "/api/v1/admin/"
+	if !strings.HasPrefix(path, prefix) {
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(path, prefix), "/")
+	if len(parts) == 1 && (parts[0] == "tenants" || parts[0] == "reload") {
+		return "/" + parts[0], 0, 0
+	}
+	if len(parts) < 3 || len(parts) > 4 || parts[0] != "tenants" {
+		return
+	}
+	tid, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || tid <= 0 || strconv.FormatInt(tid, 10) != parts[1] {
+		return "", 0, 0
+	}
+	if len(parts) == 3 && (parts[2] == "pages" || parts[2] == "domains") {
+		return "/" + parts[2], tid, 0
+	}
+	if len(parts) != 4 {
+		return "", 0, 0
+	}
+	route = "/" + parts[2] + "/" + parts[3]
+	switch route {
+	case "/pages/preview", "/pages/templates", "/pages/permissions", "/overlays/clone", "/overlays/publish", "/overlays/disable", "/nav/published", "/widgets/render", "/media/validate":
+		return route, tid, 0
+	}
+	if parts[2] != "pages" && parts[2] != "domains" {
+		return "", 0, 0
+	}
+	rid, err = strconv.ParseInt(parts[3], 10, 64)
+	if err != nil || rid <= 0 || strconv.FormatInt(rid, 10) != parts[3] {
+		return "", 0, 0
+	}
+	return "/" + parts[2] + "/id", tid, rid
+}
+
+// pagePermissions invokes the same callbacks as writes, but never dispatches
+// them. A page ID affects the probe target only; it grants no authority.
+func (a *AdminAPI) pagePermissions(w http.ResponseWriter, r *http.Request, tid int64) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	if a.RequestAccess == nil || a.TenantAccess == nil {
+		writeJSONError(w, 503, "unavailable", "permission projection not configured")
+		return
+	}
+	pid := int64(0)
+	if values, present := r.URL.Query()["page_id"]; present {
+		if len(values) != 1 {
+			writeJSONError(w, 400, "bad_request", "canonical page_id required")
+			return
+		}
+		var err error
+		pid, err = strconv.ParseInt(values[0], 10, 64)
+		if err != nil || pid <= 0 || strconv.FormatInt(pid, 10) != values[0] {
+			writeJSONError(w, 400, "bad_request", "canonical page_id required")
+			return
+		}
+	}
+	base := "/api/v1/admin/tenants/" + strconv.FormatInt(tid, 10) + "/pages"
+	probe := func(method, path string) bool {
+		p := r.Clone(r.Context())
+		u := *r.URL
+		u.Path, u.RawPath, u.RawQuery = path, "", ""
+		p.URL, p.Method, p.RequestURI, p.Body, p.ContentLength = &u, method, "", http.NoBody, 0
+		return a.RequestAccess(p) && a.TenantAccess(p, tid)
+	}
+	edit, remove := false, false
+	if pid > 0 {
+		path := base + "/" + strconv.FormatInt(pid, 10)
+		edit, remove = probe(http.MethodPut, path), probe(http.MethodDelete, path)
+	}
+	writeJSON(w, 200, map[string]bool{"create": probe(http.MethodPost, base), "edit": edit, "delete": remove})
 }
 
 // --- Reload handler -----------------------------------------------------
@@ -127,6 +226,15 @@ func (a *AdminAPI) listTenants(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	if a.TenantAccess != nil {
+		visible := make([]*store.Tenant, 0, len(tenants))
+		for _, tenant := range tenants {
+			if a.TenantAccess(r, tenant.ID) {
+				visible = append(visible, tenant)
+			}
+		}
+		tenants = visible
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": tenants})
 }
@@ -278,8 +386,8 @@ type pageUpdateBody struct {
 	BodyBlocks  json.RawMessage `json:"body_blocks"`
 	Status      *string         `json:"status"`
 	TemplateID  *string         `json:"template_id"`
-	PublishAt   *time.Time      `json:"publish_at"`
-	UnpublishAt *time.Time      `json:"unpublish_at"`
+	PublishAt   json.RawMessage `json:"publish_at"`
+	UnpublishAt json.RawMessage `json:"unpublish_at"`
 }
 
 func (a *AdminAPI) createPage(w http.ResponseWriter, r *http.Request, tenantID int64) {
@@ -295,6 +403,9 @@ func (a *AdminAPI) createPage(w http.ResponseWriter, r *http.Request, tenantID i
 	if err := decodeJSON(r, &body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
+	}
+	if strings.TrimSpace(string(body.BodyBlocks)) == "null" {
+		body.BodyBlocks = nil
 	}
 	p := &store.Page{
 		TenantID:    tenantID,
@@ -336,7 +447,15 @@ func (a *AdminAPI) getPage(w http.ResponseWriter, r *http.Request, tenantID, pag
 		statusFromPageErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	body, err := renderPageBody(p)
+	if err != nil {
+		writeJSONError(w, 400, "bad_request", "invalid page blocks")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		*store.Page
+		RenderedBodyHTML string
+	}{p, body})
 }
 
 func (a *AdminAPI) updatePage(w http.ResponseWriter, r *http.Request, tenantID, pageID int64) {
@@ -369,9 +488,16 @@ func (a *AdminAPI) updatePage(w http.ResponseWriter, r *http.Request, tenantID, 
 	}
 	if body.BodyHTML != nil {
 		existing.BodyHTML = *body.BodyHTML
+		if len(body.BodyBlocks) == 0 {
+			existing.BodyBlocks = nil
+		}
 	}
 	if len(body.BodyBlocks) > 0 {
-		existing.BodyBlocks = body.BodyBlocks
+		if string(body.BodyBlocks) == "null" {
+			existing.BodyBlocks = nil
+		} else {
+			existing.BodyBlocks = body.BodyBlocks
+		}
 	}
 	if body.Status != nil {
 		existing.Status = store.PageStatus(*body.Status)
@@ -379,11 +505,17 @@ func (a *AdminAPI) updatePage(w http.ResponseWriter, r *http.Request, tenantID, 
 	if body.TemplateID != nil {
 		existing.TemplateID = *body.TemplateID
 	}
-	if body.PublishAt != nil {
-		existing.PublishAt = body.PublishAt
+	if len(body.PublishAt) > 0 {
+		if err := json.Unmarshal(body.PublishAt, &existing.PublishAt); err != nil {
+			writeJSONError(w, 400, "bad_request", "invalid publish_at")
+			return
+		}
 	}
-	if body.UnpublishAt != nil {
-		existing.UnpublishAt = body.UnpublishAt
+	if len(body.UnpublishAt) > 0 {
+		if err := json.Unmarshal(body.UnpublishAt, &existing.UnpublishAt); err != nil {
+			writeJSONError(w, 400, "bad_request", "invalid unpublish_at")
+			return
+		}
 	}
 	if err := existing.Validate(); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -604,46 +736,7 @@ func statusFromPageErr(w http.ResponseWriter, err error) {
 	}
 }
 
-func extractTenantAndPageID(path string) (int64, int64) {
-	parts := strings.Split(path, "/")
-	var tid, pid int64
-	for i, p := range parts {
-		if p == "tenants" && i+1 < len(parts) {
-			tid, _ = strconv.ParseInt(parts[i+1], 10, 64)
-		}
-		if p == "pages" && i+1 < len(parts) {
-			pid, _ = strconv.ParseInt(parts[i+1], 10, 64)
-		}
-	}
-	return tid, pid
-}
-
 // --- helpers ------------------------------------------------------------
-
-func extractTenantID(path string) int64 {
-	parts := strings.Split(path, "/")
-	for i, p := range parts {
-		if p == "tenants" && i+1 < len(parts) {
-			id, _ := strconv.ParseInt(parts[i+1], 10, 64)
-			return id
-		}
-	}
-	return 0
-}
-
-func extractTenantAndDomainID(path string) (int64, int64) {
-	parts := strings.Split(path, "/")
-	var tid, did int64
-	for i, p := range parts {
-		if p == "tenants" && i+1 < len(parts) {
-			tid, _ = strconv.ParseInt(parts[i+1], 10, 64)
-		}
-		if p == "domains" && i+1 < len(parts) {
-			did, _ = strconv.ParseInt(parts[i+1], 10, 64)
-		}
-	}
-	return tid, did
-}
 
 func decodeJSON(r *http.Request, dst any) error {
 	defer r.Body.Close()

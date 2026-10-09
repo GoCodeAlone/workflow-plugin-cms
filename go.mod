@@ -2,9 +2,13 @@ module github.com/GoCodeAlone/workflow-plugin-cms
 
 go 1.26.4
 
+toolchain go1.27.1
+
 require (
 	github.com/GoCodeAlone/workflow v0.80.24
 	github.com/jackc/pgx/v5 v5.9.2
+	golang.org/x/crypto v0.53.0
+	golang.org/x/net v0.56.0
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 )
 
@@ -37,7 +41,6 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect

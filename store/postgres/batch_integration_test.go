@@ -17,6 +17,10 @@ import (
 // Uses a uniquely named schema and drops only that schema. Never uses the
 // application's search_path/tables. Connection values are not printed.
 func isolatedPostgres(t *testing.T) *Store {
+	return isolatedPostgresHistory(t, true)
+}
+
+func isolatedPostgresHistory(t *testing.T, includeHistory bool) *Store {
 	t.Helper()
 	uri := os.Getenv("CMS_TEST_DATABASE_URL")
 	if uri == "" {
@@ -59,6 +63,15 @@ func isolatedPostgres(t *testing.T) *Store {
 	}
 	if _, err = pool.Exec(ctx, string(migration)); err != nil {
 		t.Fatal("isolated revision migration failed")
+	}
+	if includeHistory {
+		historyMigration, err := os.ReadFile("migrations/0002_page_saved_history.up.sql")
+		if err != nil {
+			t.Fatal("required history test migration unavailable")
+		}
+		if _, err = pool.Exec(ctx, string(historyMigration)); err != nil {
+			t.Fatal("isolated history migration failed")
+		}
 	}
 	return NewWithPool(pool)
 }

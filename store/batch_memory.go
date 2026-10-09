@@ -24,23 +24,23 @@ func (s *MemoryPageStore) ReadPageState(_ context.Context, tenantID int64) (Page
 	return PageSet{Scope: s.scopeLocked(tenantID), Revision: s.revisions[tenantID], Pages: s.statesLocked(tenantID)}, nil
 }
 
-func (s *MemoryPageStore) ApplyPageBatch(_ context.Context, tenantID int64, batch PageBatch) (PageBatchReceipt, error) {
+func (s *MemoryPageStore) ApplyPageBatch(ctx context.Context, tenantID int64, batch PageBatch) (PageBatchReceipt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.applyBatchLocked(tenantID, batch, false)
+	return s.applyBatchLocked(ctx, tenantID, batch, false)
 }
 
-func (s *MemoryPageStore) RollbackPageBatch(_ context.Context, tenantID int64, receipt PageBatchReceipt) (PageBatchReceipt, error) {
+func (s *MemoryPageStore) RollbackPageBatch(ctx context.Context, tenantID int64, receipt PageBatchReceipt) (PageBatchReceipt, error) {
 	batch, err := RollbackBatch(receipt)
 	if err != nil {
 		return PageBatchReceipt{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.applyBatchLocked(tenantID, batch, true)
+	return s.applyBatchLocked(ctx, tenantID, batch, true)
 }
 
-func (s *MemoryPageStore) applyBatchLocked(tenantID int64, batch PageBatch, restore bool) (PageBatchReceipt, error) {
+func (s *MemoryPageStore) applyBatchLocked(ctx context.Context, tenantID int64, batch PageBatch, restore bool) (PageBatchReceipt, error) {
 	if tenantID <= 0 {
 		return PageBatchReceipt{}, ErrBatchInvalid
 	}
@@ -81,6 +81,12 @@ func (s *MemoryPageStore) applyBatchLocked(tenantID int64, batch PageBatch, rest
 	result.After = s.statesLocked(tenantID)
 	s.revisions[tenantID]++
 	result.AfterRevision = s.revisions[tenantID]
+	old, saved := ChangedPageStates(result.Before, result.After)
+	operation := "batch.apply"
+	if restore {
+		operation = "batch.rollback"
+	}
+	s.recordHistoryLocked(ctx, tenantID, operation, old, saved)
 	result.Seal()
 	return result, nil
 }

@@ -245,7 +245,11 @@ func (s *Store) Create(ctx context.Context, tenantID int64, p *store.Page) error
 	if err = createPage(ctx, tx, tenantID, p); err != nil {
 		return err
 	}
-	if _, err = advanceRevision(ctx, tx, tenantID); err != nil {
+	revision, err := advanceRevision(ctx, tx, tenantID)
+	if err != nil {
+		return err
+	}
+	if err := appendPageHistory(ctx, tx, tenantID, revision, "create", nil, store.States([]*store.Page{p})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -310,15 +314,26 @@ func (s *Store) GetByPath(ctx context.Context, tenantID int64, subsite, path str
 
 // Update uses the caller's loaded version, never a newly fetched version.
 func (s *Store) Update(ctx context.Context, tenantID int64, p *store.Page) error {
+	if p == nil {
+		return errors.New("page: nil")
+	}
 	tx, err := s.pageTransaction(ctx, tenantID)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	before, err := pageBefore(ctx, tx, tenantID, p.ID)
+	if err != nil {
+		return err
+	}
 	if err = updatePage(ctx, tx, tenantID, p); err != nil {
 		return err
 	}
-	if _, err = advanceRevision(ctx, tx, tenantID); err != nil {
+	revision, err := advanceRevision(ctx, tx, tenantID)
+	if err != nil {
+		return err
+	}
+	if err := appendPageHistory(ctx, tx, tenantID, revision, "update", before, store.States([]*store.Page{p})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -363,10 +378,18 @@ func (s *Store) Delete(ctx context.Context, tenantID int64, id int64, expectedVe
 		return err
 	}
 	defer tx.Rollback(ctx)
+	before, err := pageBefore(ctx, tx, tenantID, id)
+	if err != nil {
+		return err
+	}
 	if err = deletePage(ctx, tx, tenantID, id, expectedVersion); err != nil {
 		return err
 	}
-	if _, err = advanceRevision(ctx, tx, tenantID); err != nil {
+	revision, err := advanceRevision(ctx, tx, tenantID)
+	if err != nil {
+		return err
+	}
+	if err := appendPageHistory(ctx, tx, tenantID, revision, "delete", before, nil); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

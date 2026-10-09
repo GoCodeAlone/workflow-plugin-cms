@@ -79,6 +79,9 @@ func (a *AdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, 403, "forbidden", "tenant access denied")
 		return
 	}
+	if a.AuditActor != nil && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete) {
+		r = r.WithContext(store.WithPageWriteActor(r.Context(), a.AuditActor(r)))
+	}
 	switch {
 	case route == "/reload" && r.Method == "POST":
 		a.reload(w, r)
@@ -108,6 +111,8 @@ func (a *AdminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.pageTemplates(w, r, tid)
 	case route == "/pages/permissions" && r.Method == "GET":
 		a.pagePermissions(w, r, tid)
+	case route == "/pages/history" && r.Method == "GET":
+		a.pageHistory(w, r, tid)
 	case route == "/overlays/clone" && r.Method == "POST":
 		a.cloneOverlay(w, r, tid)
 	case route == "/overlays/publish" && r.Method == "PUT":
@@ -151,7 +156,7 @@ func parseAdminRoute(path string) (route string, tid, rid int64) {
 	}
 	route = "/" + parts[2] + "/" + parts[3]
 	switch route {
-	case "/pages/preview", "/pages/templates", "/pages/permissions", "/overlays/clone", "/overlays/publish", "/overlays/disable", "/nav/published", "/widgets/render", "/media/validate":
+	case "/pages/preview", "/pages/templates", "/pages/permissions", "/pages/history", "/overlays/clone", "/overlays/publish", "/overlays/disable", "/nav/published", "/widgets/render", "/media/validate":
 		return route, tid, 0
 	}
 	if parts[2] != "pages" && parts[2] != "domains" {

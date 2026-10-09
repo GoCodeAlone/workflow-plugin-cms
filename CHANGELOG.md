@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Content-only frozen snapshots, explicit target mappings and dry-run diffs with verified bundle references.
 - Atomic baseline/revision-guarded page batches and rollback that preserve newer edits; requires the explicit host content-revision migration.
+- Transactional saved page history retains changed-page before/after content and trusted host-supplied actors for page writes, batches and rollback; requires the explicit history migration and coordinated host adoption.
+- Tenant-authorized history readback provides bounded cursors and an adoption-start marker. Refused stale writes append no history; pre-adoption edits and unsaved drafts are not reconstructed.
 
 ### Changed
 

@@ -151,6 +151,7 @@ func New(cfg Config) *Server {
 	api.TenantAccess = cfg.AdminTenantAccess
 	api.PlatformAccess = cfg.AdminPlatformAccess
 	api.RequestAccess = cfg.AdminAuth
+	api.AuditActor = cfg.AuditActor
 	api.ResolveTemplate = s.resolveTenantTemplate
 	api.ListTemplates = s.listTenantTemplates
 	s.admin = api
@@ -169,7 +170,6 @@ func New(cfg Config) *Server {
 	if cfg.AuditSignKey != "" {
 		s.audit = audit.New(cfg.AuditSignKey, cfg.AuditSink)
 		s.admin.Audit = s.audit
-		s.admin.AuditActor = cfg.AuditActor
 	}
 	s.adminRoot = adminui.Handler()
 	s.adminUI = http.StripPrefix("/admin", s.adminRoot)

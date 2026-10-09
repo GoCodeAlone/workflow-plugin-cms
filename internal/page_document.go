@@ -72,6 +72,10 @@ func renderPageBody(page *store.Page) (string, error) {
 	return page.BodyHTML, nil
 }
 
+// RenderPageBody shares the actual canonical serve-time renderer with content
+// preparation. Link validation follows rendered semantics, not arbitrary text.
+func RenderPageBody(page *store.Page) (string, error) { return renderPageBody(page) }
+
 type blockNode struct {
 	Type    string          `json:"type"`
 	Text    string          `json:"text"`

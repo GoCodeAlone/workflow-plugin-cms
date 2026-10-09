@@ -13,7 +13,7 @@ func TestHTMLUpdateClearsCanonicalBlocksAndSchedule(t *testing.T) {
 	_, tenant := doJSON(t, a, "POST", "/api/v1/admin/tenants", map[string]any{"slug": "review"})
 	base := "/api/v1/admin/tenants/" + strconv.Itoa(int(tenant["ID"].(float64))) + "/pages"
 	_, p := doJSON(t, a, "POST", base, map[string]any{"path": "/", "title": "Home", "body_blocks": map[string]any{"type": "doc", "content": []any{map[string]any{"type": "paragraph", "content": []any{map[string]any{"type": "text", "text": "old"}}}}}, "publish_at": "2026-01-01T00:00:00Z"})
-	rec, p := doJSON(t, a, "PUT", base+"/"+strconv.Itoa(int(p["ID"].(float64))), map[string]any{"body_html": "<p>Edited</p>", "body_blocks": nil, "publish_at": nil, "unpublish_at": nil})
+	rec, p := doJSON(t, a, "PUT", base+"/"+strconv.Itoa(int(p["ID"].(float64))), map[string]any{"expected_version": p["Version"], "body_html": "<p>Edited</p>", "body_blocks": nil, "publish_at": nil, "unpublish_at": nil})
 	if rec.Code != http.StatusOK || p["BodyBlocks"] != nil || p["PublishAt"] != nil {
 		t.Fatalf("stale canonical content or schedule: %d %#v", rec.Code, p)
 	}

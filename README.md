@@ -1,5 +1,23 @@
 # workflow-plugin-cms
 
+The editor accepts harmless HTML normalization (entities, attribute quoting and
+empty data attributes) without forcing source mode. Its original source remains
+authoritative until a visual edit. Removed or advanced markup stays in the
+source editor; the visual DOM always uses the pinned local sanitizer.
+
+The opt-in native editor browser regression covers both modes, source
+preservation, unsafe payloads, and save/reload through the actual CMS API:
+
+```sh
+CMS_NORMALIZATION_BROWSER=1 CMS_PLAYWRIGHT_MODULE=/path/to/playwright/package.json \
+  go test ./host -run '^TestEditorNormalizationBrowserScenario$' -count=1 -v
+```
+
+The module path must resolve an installed Playwright package; optionally set
+`CMS_BROWSER_CHANNEL=msedge`. This loopback fixture uses isolated memory stores
+and a test cookie auth hook. It does not exercise production authorization or
+PostgreSQL restart durability.
+
 > ⚠️ **Experimental** — This plugin compiles and passes its unit tests but has not been validated in any active GoCodeAlone-internal production deployment. Use with caution. Please [open an issue](https://github.com/GoCodeAlone/workflow-plugin-cms/issues/new) if you adopt it so we can promote it to **verified** status.
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

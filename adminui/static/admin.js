@@ -49,6 +49,9 @@ let navigationGeneration = 0, historyPosition = 0, saving = false, restoringHist
 let frozenDraftControls = null;
 let pagePermissions = {create:false, edit:false, delete:false};
 const savedPageBodies = new WeakMap();
+// Classification metadata only: visual DOM always comes from the sanitizer.
+// It never authorizes markup or changes the canonical source on its own.
+const editorSanitizationChanges = new WeakMap();
 const pageField = (form,name) => form.querySelector(':scope > input[data-page-field][name="'+name+'"], :scope > .settings-pane > label > [data-page-field][name="'+name+'"]');
 
 function pagePayload(form) {
@@ -396,15 +399,10 @@ function setRichEditorHTML(root, html) {
 }
 
 function hasAdvancedMarkup(raw, safe) {
-  // Conservative comparison keeps canonical source authoritative. Never parse
-  // unsanitized source again merely to decide which editing mode to display.
-  return /<!doctype|<(?:html|head|body|form)[\s>]/i.test(raw) || String(raw).trim() !== serializeEditorDOM(safe).trim();
-}
-
-function serializeEditorDOM(fragment) {
-  const holder = document.createElement("div");
-  holder.append(fragment.cloneNode(true));
-  return holder.innerHTML;
+  // Entity escaping, quoting and empty attributes normalize during safe parsing.
+  // Only a removed element/attribute (or a full document/form) requires source
+  // editing. Keep the original source authoritative until a real visual edit.
+  return /<\s*(?:!doctype|html|head|body|title|noscript|script|style|link|meta|base|iframe|object|embed|svg|math|template|form|input|textarea|select|option|video|audio|source)(?:[\s/>]|$)/i.test(raw) || editorSanitizationChanges.get(safe) !== false;
 }
 
 function setSourceNotice(editor, advanced) {
@@ -466,16 +464,21 @@ function sanitizeEditorDOM(value) {
     FORBID_TAGS:["script","style","link","meta","base","iframe","object","embed","svg","math","template","form","input","textarea","select","option","video","audio","source"],
     FORBID_ATTR:["srcdoc","style","action","formaction","srcset","autofocus","autoplay","poster","background","ping","lowsrc","dynsrc","archive","codebase","data"],
   });
+  let removedMarkup = DOMPurify.removed.length > 0;
   fragment.querySelectorAll("*").forEach(el => {
     [...el.attributes].forEach(attr => {
       const name = attr.name.toLowerCase();
       if (name.startsWith("on") ||
           (name === "target" && !["_blank", "_self"].includes(attr.value)) ||
           (name === "href" && !safeEditorURL(attr.value)) ||
-          (name === "src" && (el.tagName !== "IMG" || !/^\/assets\/[a-zA-Z0-9._/-]+$/.test(attr.value) || attr.value.split("/").some(part => part === "." || part === "..") || !safeEditorURL(attr.value)))) el.removeAttribute(attr.name);
+          (name === "src" && (el.tagName !== "IMG" || !/^\/assets\/[a-zA-Z0-9._/-]+$/.test(attr.value) || attr.value.split("/").some(part => part === "." || part === "..") || !safeEditorURL(attr.value)))) {
+        removedMarkup = true;
+        el.removeAttribute(attr.name);
+      }
     });
     if (el.tagName === "A" && el.target === "_blank") el.rel = "noopener noreferrer";
   });
+  editorSanitizationChanges.set(fragment, removedMarkup);
   return fragment;
 }
 

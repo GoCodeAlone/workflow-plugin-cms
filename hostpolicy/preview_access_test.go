@@ -275,3 +275,77 @@ func TestPreviewAccessCannotBypassMissingOrUnsupportedPasswordHash(t *testing.T)
 		}
 	}
 }
+
+func TestPreviewAccessRejectsMalformedCostValidBcryptHashes(t *testing.T) {
+	calls := 0
+	gate, _ := previewAccessFixture(t, func(*http.Request, Tenant) bool { calls++; return true }, TransportStrict)
+	policy := gate.cfg.Policies["a"]
+	valid := policy.PasswordHash
+	alphabet := "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	noncanonical := func(value byte) byte { return alphabet[strings.IndexByte(alphabet, value)|1] }
+	for _, tc := range []struct{ name, hash string }{
+		{"invalid-payload-alphabet", "$2a$10$" + strings.Repeat("!", 53)},
+		{"invalid-salt-alphabet", valid[:7] + strings.Repeat("!", 22) + valid[29:]},
+		{"invalid-checksum-alphabet", valid[:29] + strings.Repeat("!", 31)},
+		{"short-checksum", valid[:59]},
+		{"long-checksum", valid + "A"},
+		{"unsupported-major", "$1a$" + valid[4:]},
+		{"unsupported-minor", "$2x$" + valid[4:]},
+		{"wrong-version-delimiter", "$2a!" + valid[4:]},
+		{"wrong-cost-delimiter", valid[:6] + "!" + valid[7:]},
+		{"noncanonical-salt-bits", valid[:28] + string(noncanonical(valid[28])) + valid[29:]},
+		{"noncanonical-checksum-bits", valid[:59] + string(noncanonical(valid[59]))},
+		{"newline-in-salt", valid[:17] + "\n" + valid[18:]},
+		{"newline-in-checksum", valid[:40] + "\n" + valid[41:]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if cost, err := bcrypt.Cost([]byte(tc.hash)); err != nil || cost != 10 {
+				t.Fatalf("regression fixture must pass existing cost check: %d %v", cost, err)
+			}
+			changed := policy
+			changed.PasswordHash = tc.hash
+			gate.cfg.Policies["a"] = changed
+			r := httptest.NewRequest("GET", "https://a.preview.test/", nil)
+			r.Header.Set("Authorization", "Bearer fixture")
+			w := httptest.NewRecorder()
+			gate.ServeHTTP(w, r)
+			if w.Code != 401 || calls != 0 {
+				t.Fatalf("malformed cost-valid hash reached callback: %d calls %d", w.Code, calls)
+			}
+		})
+	}
+	for _, version := range []string{"$2a$", "$2b$", "$2y$"} {
+		changed := policy
+		changed.PasswordHash = version + valid[4:]
+		gate.cfg.Policies["a"] = changed
+		// The positive is a real generated cost-10 hash, not a syntactic fake.
+		if err := bcrypt.CompareHashAndPassword([]byte(changed.PasswordHash), []byte("human-review-fixture")); err != nil {
+			t.Fatalf("supported generated hash does not verify: %v", err)
+		}
+		r := httptest.NewRequest("GET", "https://a.preview.test/", nil)
+		r.Header.Set("Authorization", "Bearer fixture")
+		w := httptest.NewRecorder()
+		gate.ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("supported generated hash denied callback: %d", w.Code)
+		}
+	}
+	if calls != 3 {
+		t.Fatalf("unexpected valid callback count: %d", calls)
+	}
+	// Malformed cost-valid settings retain Basic's rejection with or without a
+	// callback configured; neither mode delegates a Basic request.
+	callback := gate.cfg.PreviewAccess
+	policy.PasswordHash = "$2a$10$" + strings.Repeat("!", 53)
+	gate.cfg.Policies["a"] = policy
+	for _, configured := range []func(*http.Request, Tenant) bool{callback, nil} {
+		gate.cfg.PreviewAccess = configured
+		r := httptest.NewRequest("GET", "https://a.preview.test/", nil)
+		r.SetBasicAuth("a", "human-review-fixture")
+		w := httptest.NewRecorder()
+		gate.ServeHTTP(w, r)
+		if w.Code != 401 || calls != 3 {
+			t.Fatalf("Basic malformed-hash rejection changed: %d calls %d", w.Code, calls)
+		}
+	}
+}

@@ -6,6 +6,7 @@ package hostpolicy
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
@@ -68,6 +69,7 @@ type Gate struct {
 }
 
 var hostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$`)
+var previewBcryptEncoding = base64.NewEncoding("./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789").WithPadding(base64.NoPadding).Strict()
 
 func New(cfg Config, next http.Handler) (*Gate, error) {
 	if cfg.Resolve == nil || next == nil {
@@ -216,7 +218,7 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username, password, ok := r.BasicAuth()
-	if !ok && g.cfg.PreviewAccess != nil && previewAccessRequest(r, tenant) && g.cfg.PreviewAccess(r.Clone(r.Context()), tenant) {
+	if !ok && g.cfg.PreviewAccess != nil && previewAccessRequest(r, tenant) && validPreviewPasswordHash(hash) && g.cfg.PreviewAccess(r.Clone(r.Context()), tenant) {
 		g.servePrivate(private, r)
 		return
 	}
@@ -275,6 +277,30 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	g.servePrivate(private, r)
+}
+
+// Cost validates the header, not the encoded payload. Callback authority needs
+// a complete supported hash; human Basic retains the existing bcrypt verifier.
+// The caller has already enforced the configured cost bounds.
+func validPreviewPasswordHash(hash string) bool {
+	if len(hash) != 60 || hash[6] != '$' {
+		return false
+	}
+	switch hash[:4] {
+	case "$2a$", "$2b$", "$2y$":
+	default:
+		return false
+	}
+	for _, field := range []struct {
+		encoded string
+		size    int
+	}{{hash[7:29], 16}, {hash[29:], 23}} {
+		decoded, err := previewBcryptEncoding.DecodeString(field.encoded)
+		if err != nil || len(decoded) != field.size || previewBcryptEncoding.EncodeToString(decoded) != field.encoded {
+			return false
+		}
+	}
+	return true
 }
 
 // previewAccessRequest is a ceiling on the host callback, not a content

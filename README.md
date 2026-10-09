@@ -122,8 +122,11 @@ does not issue credentials or cache callback approvals.
 
 The callback is considered only after the existing HTTPS, current canonical
 domain ownership, and valid tenant password-hash checks, for tenants resolved
-with kind `preview`. Its ceiling allows only GET/HEAD with canonical unencoded
-content paths and no query or request body. API, admin, auth, internal, control,
+with kind `preview`. Callback access requires a complete 60-byte `$2a$`, `$2b$`
+or `$2y$` hash with canonical bcrypt-base64 salt and checksum encoding; a cost
+header alone does not establish configured password protection. Its ceiling
+allows only GET/HEAD with canonical unencoded content paths and no query or
+request body. API, admin, auth, internal, control,
 health, metrics, hidden paths and path aliases are excluded. It receives a
 request clone; changes to it cannot change the downstream target. An approval
 uses the same credential-stripping and private/no-store/noindex response path

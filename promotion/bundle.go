@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
+	"mime"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -125,7 +127,7 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		if !publicPageContent(p) {
 			return ErrBundle
 		}
-		routes[p.Path] = true
+		routes[p.Subsite+"\x00"+p.Path] = true
 		exact := strings.TrimPrefix(p.Path, "/")
 		if exact == "" {
 			exact = "index.html"
@@ -143,7 +145,8 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		navigationReference
 		descriptionReference
 	)
-	checkRef := func(raw, base string, kind referenceKind) error {
+	hasRoute := func(subsite, route string) bool { return routes[subsite+"\x00"+route] || routes["\x00"+route] }
+	checkRef := func(raw, base, subsite string, kind referenceKind) error {
 		link := kind != resourceReference
 		if raw == "" || strings.HasPrefix(raw, "#") {
 			return nil
@@ -168,7 +171,7 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		// that exact selected route may use it; uploads, resource requests,
 		// absolute private URLs and other private namespaces remain refused.
 		canonicalMediaPath := u.RawPath == "" && (u.Path == "/media" || u.Path == "media")
-		selectedMediaLink := kind == navigationReference && u.Scheme == "" && u.Host == "" && canonicalMediaPath && resolved == "/media" && routes[resolved]
+		selectedMediaLink := kind == navigationReference && u.Scheme == "" && u.Host == "" && canonicalMediaPath && resolved == "/media" && hasRoute(subsite, resolved)
 		if forbiddenPath(resolved) && !selectedMediaLink {
 			return ErrBundle
 		}
@@ -184,15 +187,15 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		if u.Host != "" {
 			return ErrBundle
 		}
-		if files[resolved] || link && routes[resolved] {
+		if files[resolved] || link && hasRoute(subsite, resolved) {
 			return nil
 		}
 		return ErrBundle
 	}
 	checkCSS := func(css, base string) error {
-		return verifyCSSReferences(css, func(ref string) error { return checkRef(ref, base, resourceReference) })
+		return verifyCSSReferences(css, func(ref string) error { return checkRef(ref, base, "", resourceReference) })
 	}
-	checkHTML := func(source, base string) error {
+	checkHTML := func(source, base, subsite string) error {
 		var visit func(*html.Node) error
 		visit = func(n *html.Node) error {
 			if n.Type == html.ElementNode {
@@ -223,16 +226,16 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 					if a.Key == "href" && (n.Data == "a" || n.Data == "area") {
 						kind = navigationReference
 					}
-					if err := checkRef(a.Val, base, kind); err != nil {
+					if err := checkRef(a.Val, base, subsite, kind); err != nil {
 						return err
 					}
 				case "cite", "longdesc":
-					if err := checkRef(a.Val, base, descriptionReference); err != nil {
+					if err := checkRef(a.Val, base, subsite, descriptionReference); err != nil {
 						return err
 					}
 				case "ping":
 					for _, ref := range strings.Fields(a.Val) {
-						if err := checkRef(ref, base, resourceReference); err != nil {
+						if err := checkRef(ref, base, subsite, resourceReference); err != nil {
 							return err
 						}
 					}
@@ -242,7 +245,7 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 						if len(parts) == 0 {
 							return ErrBundle
 						}
-						if err := checkRef(parts[0], base, resourceReference); err != nil {
+						if err := checkRef(parts[0], base, subsite, resourceReference); err != nil {
 							return err
 						}
 					}
@@ -286,7 +289,7 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 		if err != nil {
 			return ErrBundle
 		}
-		if err = checkHTML(canonical, p.Path); err != nil {
+		if err = checkHTML(canonical, p.Path, p.Subsite); err != nil {
 			return err
 		}
 		if len(p.BodyBlocks) > 0 {
@@ -312,7 +315,7 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 								if key == "href" {
 									kind = navigationReference
 								}
-								if err := checkRef(ref, p.Path, kind); err != nil {
+								if err := checkRef(ref, p.Path, p.Subsite, kind); err != nil {
 									return err
 								}
 							}
@@ -329,18 +332,23 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 				return err
 			}
 		}
-		if err := checkHTML(p.BodyHTML, p.Path); err != nil {
+		if err := checkHTML(p.BodyHTML, p.Path, p.Subsite); err != nil {
 			return err
 		}
 	}
 	for _, f := range manifest.Files {
-		ext := strings.ToLower(path.Ext(f.Path))
-		if ext == ".css" || ext == ".html" || ext == ".htm" {
+		contentType, err := servedBundleContentType(root, f.Path)
+		if err != nil || strings.HasSuffix(contentType, "+xml") || contentType == "text/xml" || contentType == "application/xml" {
+			// SVG/XHTML/XML can contain nested document resources. They need
+			// their own reviewed parser; silently skipping them is unsafe.
+			return ErrBundle
+		}
+		if contentType == "text/css" || contentType == "text/html" {
 			b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(f.Path)))
 			if err != nil {
 				return ErrBundle
 			}
-			if ext == ".css" {
+			if contentType == "text/css" {
 				if err := checkCSS(string(b), "/"+f.Path); err != nil {
 					return err
 				}
@@ -355,23 +363,50 @@ func VerifyBundle(root string, manifest BundleManifest, pages []store.PageConten
 					for _, p := range pages {
 						if p.TemplateID+".html" == path.Base(f.Path) {
 							selected = true
-							if err := checkHTML(string(b), p.Path); err != nil {
+							if err := checkHTML(string(b), p.Path, p.Subsite); err != nil {
 								return err
 							}
 						}
 					}
 					if !selected {
-						if err := checkHTML(string(b), ""); err != nil {
+						if err := checkHTML(string(b), "", ""); err != nil {
 							return err
 						}
 					}
-				} else if err := checkHTML(string(b), "/"+f.Path); err != nil {
+				} else if err := checkHTML(string(b), "/"+f.Path, ""); err != nil {
 					return err
 				}
 			}
 		}
 	}
 	return nil
+}
+
+// Match the actual host: .html is explicitly HTML; ServeContent otherwise
+// uses TypeByExtension and then sniffs the first 512 bytes for unknown types.
+func servedBundleContentType(root, name string) (string, error) {
+	value := mime.TypeByExtension(path.Ext(name))
+	if strings.EqualFold(path.Ext(name), ".html") {
+		value = "text/html"
+	}
+	if value == "" {
+		f, err := os.Open(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil {
+			return "", ErrBundle
+		}
+		prefix := make([]byte, 512)
+		n, readErr := io.ReadFull(f, prefix)
+		closeErr := f.Close()
+		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF || closeErr != nil {
+			return "", ErrBundle
+		}
+		value = http.DetectContentType(prefix[:n])
+	}
+	contentType, _, err := mime.ParseMediaType(value)
+	if err != nil {
+		return "", ErrBundle
+	}
+	return contentType, nil
 }
 
 func forbiddenPath(p string) bool {

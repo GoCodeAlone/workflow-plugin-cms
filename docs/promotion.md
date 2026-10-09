@@ -63,6 +63,12 @@ alternative string-image functions `image()`, `image-set()`,
 `-webkit-image-set()` and `src()` are unsupported and fail closed. Comments and
 ordinary text/font strings remain supported; no new CSS parser dependency is
 installed.
+Unknown file extensions are classified using the host's `ServeContent` MIME
+sniffing rules; HTML documents receive the same reference checks. SVG, XHTML
+and other XML documents are unsupported and refused pending a reviewed parser.
+Internal links require a selected page in the source page's own subsite or the
+root fallback, matching host routing. A selected sibling-subsite page cannot
+make an otherwise unreachable link valid, including the `/media` exception.
 This is reference validation, not a JavaScript sandbox. The host must review the
 exact approved bundle's scripts and runtime behavior separately.
 

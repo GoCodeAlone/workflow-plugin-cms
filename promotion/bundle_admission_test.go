@@ -1,13 +1,79 @@
 package promotion
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-cms/store"
 )
+
+func TestBundleInspectsDocumentsAsActuallyServed(t *testing.T) {
+	for _, tc := range []struct{ name, content, mediaType string }{
+		{"resource", `<!doctype html><img src="/media/234/photo.jpg">`, "text/html"},
+		{"resource.unknown-extension", `<html><img src="/media/234/photo.jpg"></html>`, "text/html"},
+		{"resource.svg", `<svg xmlns="http://www.w3.org/2000/svg"><image href="/media/234/photo.jpg"/></svg>`, "image/svg+xml"},
+		{"resource.xhtml", `<html xmlns="http://www.w3.org/1999/xhtml"><img src="/media/234/photo.jpg"/></html>`, "application/xhtml+xml"},
+		{"resource-xml", `<?xml version="1.0"?><svg><image href="/media/234/photo.jpg"/></svg>`, "text/xml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			http.ServeContent(response, httptest.NewRequest("GET", "/"+tc.name, nil), tc.name, time.Time{}, strings.NewReader(tc.content))
+			if !strings.HasPrefix(response.Header().Get("Content-Type"), tc.mediaType) {
+				t.Fatal("expected served document classification missing")
+			}
+			s, root, _, _ := fixture(t)
+			p := s.Pages[0].Content
+			p.BodyHTML = `<iframe src="/` + tc.name + `"></iframe>`
+			writeAdmissionFile(t, root, tc.name, tc.content)
+			m, err := InventoryBundle(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if VerifyBundle(root, m, []store.PageContent{p}) != ErrBundle {
+				t.Fatal("unchecked served document admitted")
+			}
+		})
+	}
+}
+
+func TestBundleLinksRespectSubsiteAndRootFallback(t *testing.T) {
+	for _, destination := range []string{"/beta-only", "/media"} {
+		for _, surface := range []string{"body", "blocks", "template"} {
+			for _, targetSubsite := range []string{"beta", "alpha", ""} {
+				t.Run(destination+"/"+surface+"/"+targetSubsite, func(t *testing.T) {
+					s, root, _, _ := fixture(t)
+					source := s.Pages[0].Content
+					source.Path, source.Subsite, source.BodyHTML = "/alpha-home", "alpha", "<p>Alpha.</p>"
+					link := `<a href="` + destination + `">Destination</a>`
+					target := source
+					target.Path, target.Subsite = destination, targetSubsite
+					target.TemplateID = ""
+					switch surface {
+					case "body":
+						source.BodyHTML = link
+					case "blocks":
+						source.BodyBlocks = []byte(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"link","attrs":{"href":"` + destination + `"},"content":[{"type":"text","text":"Destination"}]}]}]}`)
+					case "template":
+						writeAdmissionFile(t, root, "cms/templates/main.html", link+`<!--cms:body-->`)
+					}
+					m, err := InventoryBundle(root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					err = VerifyBundle(root, m, []store.PageContent{source, target})
+					if (err == nil) != (targetSubsite != "beta") {
+						t.Fatalf("cross-subsite link admission mismatch: %v", err)
+					}
+				})
+			}
+		}
+	}
+}
 
 func writeAdmissionFile(t *testing.T, root, name, contents string) {
 	t.Helper()

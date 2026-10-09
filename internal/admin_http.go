@@ -1,9 +1,11 @@
 package internal
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -379,15 +381,16 @@ type pageBody struct {
 }
 
 type pageUpdateBody struct {
-	Subsite     *string         `json:"subsite"`
-	Path        *string         `json:"path"`
-	Title       *string         `json:"title"`
-	BodyHTML    *string         `json:"body_html"`
-	BodyBlocks  json.RawMessage `json:"body_blocks"`
-	Status      *string         `json:"status"`
-	TemplateID  *string         `json:"template_id"`
-	PublishAt   json.RawMessage `json:"publish_at"`
-	UnpublishAt json.RawMessage `json:"unpublish_at"`
+	ExpectedVersion int             `json:"expected_version"`
+	Subsite         *string         `json:"subsite"`
+	Path            *string         `json:"path"`
+	Title           *string         `json:"title"`
+	BodyHTML        *string         `json:"body_html"`
+	BodyBlocks      json.RawMessage `json:"body_blocks"`
+	Status          *string         `json:"status"`
+	TemplateID      *string         `json:"template_id"`
+	PublishAt       json.RawMessage `json:"publish_at"`
+	UnpublishAt     json.RawMessage `json:"unpublish_at"`
 }
 
 func (a *AdminAPI) createPage(w http.ResponseWriter, r *http.Request, tenantID int64) {
@@ -477,6 +480,14 @@ func (a *AdminAPI) updatePage(w http.ResponseWriter, r *http.Request, tenantID, 
 		writeJSONError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	if body.ExpectedVersion <= 0 {
+		writeJSONError(w, http.StatusPreconditionRequired, "precondition_required", "expected_version required; reload the page")
+		return
+	}
+	if body.ExpectedVersion != existing.Version {
+		statusFromPageErr(w, store.ErrVersionConflict)
+		return
+	}
 	if body.Path != nil {
 		existing.Path = *body.Path
 	}
@@ -540,7 +551,18 @@ func (a *AdminAPI) deletePage(w http.ResponseWriter, r *http.Request, tenantID, 
 		writeJSONError(w, http.StatusServiceUnavailable, "unavailable", "page store not configured")
 		return
 	}
-	if err := a.pages.Delete(r.Context(), tenantID, pageID); err != nil {
+	var body struct {
+		ExpectedVersion int `json:"expected_version"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid JSON request")
+		return
+	}
+	if body.ExpectedVersion <= 0 {
+		writeJSONError(w, http.StatusPreconditionRequired, "precondition_required", "expected_version required; reload the page")
+		return
+	}
+	if err := a.pages.Delete(r.Context(), tenantID, pageID, body.ExpectedVersion); err != nil {
 		statusFromPageErr(w, err)
 		return
 	}
@@ -729,6 +751,8 @@ func statusFromPageErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeJSONError(w, http.StatusNotFound, "not_found", err.Error())
+	case errors.Is(err, store.ErrVersionConflict):
+		writeJSONError(w, http.StatusConflict, "version_conflict", err.Error())
 	case errors.Is(err, store.ErrPathConflict):
 		writeJSONError(w, http.StatusConflict, "conflict", err.Error())
 	default:
@@ -740,9 +764,19 @@ func statusFromPageErr(w http.ResponseWriter, err error) {
 
 func decodeJSON(r *http.Request, dst any) error {
 	defer r.Body.Close()
-	dec := json.NewDecoder(r.Body)
+	b, err := io.ReadAll(io.LimitReader(r.Body, (8<<20)+1))
+	if err != nil || len(b) > 8<<20 {
+		return errors.New("invalid JSON request")
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
-	return dec.Decode(dst)
+	if err := dec.Decode(dst); err != nil {
+		return errors.New("invalid JSON request")
+	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		return errors.New("invalid JSON request")
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

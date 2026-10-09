@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Content-only frozen snapshots, explicit target mappings and dry-run diffs with verified bundle references.
+- Atomic baseline/revision-guarded page batches and rollback that preserve newer edits; requires the explicit host content-revision migration.
+
+### Changed
+
+- Page update/delete require the loaded expected version, and the editor retains unsaved drafts on conflicts.
+- Promotion integration retains released normalized-HTML source preservation and editable-control contrast. No live promotion endpoint is enabled.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added

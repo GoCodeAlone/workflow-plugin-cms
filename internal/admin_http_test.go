@@ -48,7 +48,7 @@ func TestAdmin_PageTemplateAndScheduleFieldsPersist(t *testing.T) {
 	pid := int64(gotP["ID"].(float64))
 	rec, gotP = doJSON(t, api, http.MethodPut,
 		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages/"+strconv.FormatInt(pid, 10),
-		map[string]any{"template_id": "alt-shell", "status": "published"})
+		map[string]any{"expected_version": gotP["Version"], "template_id": "alt-shell", "status": "published"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update scheduled page: %d %v", rec.Code, gotP)
 	}
@@ -363,7 +363,7 @@ func TestAdmin_PageCRUD(t *testing.T) {
 	// Update.
 	rec, gotU := doJSON(t, api, http.MethodPut,
 		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages/"+strconv.FormatInt(pid, 10),
-		map[string]string{"title": "Updated"})
+		map[string]any{"expected_version": gotP["Version"], "title": "Updated"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update page: %d %v", rec.Code, gotU)
 	}
@@ -373,7 +373,7 @@ func TestAdmin_PageCRUD(t *testing.T) {
 
 	rec, gotU = doJSON(t, api, http.MethodPut,
 		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages/"+strconv.FormatInt(pid, 10),
-		map[string]string{"body_html": "", "subsite": ""})
+		map[string]any{"expected_version": gotU["Version"], "body_html": "", "subsite": ""})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("clear page fields: %d %v", rec.Code, gotU)
 	}
@@ -404,7 +404,7 @@ func TestAdmin_PageCRUD(t *testing.T) {
 
 	// Delete.
 	rec, _ = doJSON(t, api, http.MethodDelete,
-		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages/"+strconv.FormatInt(pid, 10), nil)
+		"/api/v1/admin/tenants/"+strconv.FormatInt(tid, 10)+"/pages/"+strconv.FormatInt(pid, 10), map[string]any{"expected_version": gotG["Version"]})
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("delete: %d want 204", rec.Code)
 	}

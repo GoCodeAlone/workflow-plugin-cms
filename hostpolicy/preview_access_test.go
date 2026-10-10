@@ -12,7 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func previewAccessFixture(t *testing.T, callback func(*http.Request, Tenant) bool, transport TransportMode) (*Gate, map[string]Tenant) {
+func previewAccessFixture(t *testing.T, callback func(*http.Request, Tenant) bool, transport TransportMode, queryTargets ...map[int64][]string) (*Gate, map[string]Tenant) {
 	t.Helper()
 	hash, err := bcrypt.GenerateFromPassword([]byte("human-review-fixture"), 10)
 	if err != nil {
@@ -23,12 +23,16 @@ func previewAccessFixture(t *testing.T, callback func(*http.Request, Tenant) boo
 		"a.preview.test": {1, "a", "preview"}, "a.alternate.test": {1, "a", "vanity"},
 		"b.preview.test": {2, "b", "preview"}, "unconfigured.preview.test": {3, "unconfigured", "preview"},
 	}
+	var queries map[int64][]string
+	if len(queryTargets) == 1 {
+		queries = queryTargets[0]
+	}
 	gate, err := New(Config{AdminHost: "admin.test", PlatformHost: "platform.test", Transport: transport,
 		Resolve: func(_ context.Context, host string) (Tenant, bool) { tenant, ok := hosts[host]; return tenant, ok },
 		Policies: map[string]Policy{
 			"a": {Primary: "primary.test", RedirectAliases: []string{"www.primary.test"}, PasswordHash: string(hash)},
 			"b": {PasswordHash: string(hash)},
-		}, PreviewAccess: callback,
+		}, PreviewAccess: callback, PreviewAccessQueryTargets: queries,
 	}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.Host, ".preview.test") && (r.Header.Get("Authorization") != "" || r.Header.Get("Proxy-Authorization") != "") {
 			t.Error("preview credential reached content handler")
@@ -36,7 +40,7 @@ func previewAccessFixture(t *testing.T, callback func(*http.Request, Tenant) boo
 		w.Header().Set("Cache-Control", "public, max-age=31536000")
 		w.Header().Set("X-Robots-Tag", "index")
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-		w.Write([]byte(r.Method + " " + r.Host + " " + r.URL.Path))
+		w.Write([]byte(r.Method + " " + r.Host + " " + r.URL.RequestURI()))
 	}))
 	if err != nil {
 		t.Fatal(err)

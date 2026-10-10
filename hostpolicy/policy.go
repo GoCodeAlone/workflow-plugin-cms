@@ -48,11 +48,17 @@ type Config struct {
 	// PreviewAccess optionally verifies host-owned, scoped preview authority on
 	// every eligible request. It is considered only for protected preview tenants,
 	// after transport/canonical policy checks, for canonical content GET/HEAD
-	// targets without queries. Basic authentication and all privileged routes keep
-	// their existing gates. The callback must verify the exact origin, path, tenant,
+	// targets without queries, or explicitly declared query targets below. Basic
+	// authentication and all privileged routes keep their existing gates. The
+	// callback must verify the exact origin, path AND raw query, tenant,
 	// audience and current grant; it grants no CMS/admin authority. Nil or false
 	// preserves Basic authentication. Its request clone must not be retained.
 	PreviewAccess func(*http.Request, Tenant) bool
+	// PreviewAccessQueryTargets is an optional finite per-tenant ceiling, derived
+	// from validated host declarations. Only exact canonical GET/HEAD targets may
+	// reach PreviewAccess. A nil/empty map retains the default query denial; these
+	// declarations confer no authority without the callback's current grant check.
+	PreviewAccessQueryTargets map[int64][]string
 }
 type success struct{ until time.Time }
 type attempts struct {
@@ -60,12 +66,13 @@ type attempts struct {
 	until time.Time
 }
 type Gate struct {
-	cfg      Config
-	next     http.Handler
-	mu       sync.Mutex
-	cache    map[[32]byte]success
-	failures map[string]attempts
-	kdf      chan struct{}
+	cfg            Config
+	next           http.Handler
+	mu             sync.Mutex
+	cache          map[[32]byte]success
+	failures       map[string]attempts
+	kdf            chan struct{}
+	previewQueries map[int64]map[string]struct{}
 }
 
 var hostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$`)
@@ -131,7 +138,25 @@ func New(cfg Config, next http.Handler) (*Gate, error) {
 	}
 	cfg.Policies = copyPolicies
 	cfg.TrustedProxies = append([]netip.Prefix(nil), cfg.TrustedProxies...)
-	return &Gate{cfg: cfg, next: next, cache: map[[32]byte]success{}, failures: map[string]attempts{}, kdf: make(chan struct{}, 2)}, nil
+	queries := map[int64]map[string]struct{}{}
+	for tenantID, targets := range cfg.PreviewAccessQueryTargets {
+		if cfg.PreviewAccess == nil || tenantID <= 0 || len(targets) == 0 || len(targets) > 16 {
+			return nil, errors.New("invalid preview query target declaration")
+		}
+		queries[tenantID] = map[string]struct{}{}
+		for _, target := range targets {
+			if !canonicalPreviewQueryTarget(target) {
+				return nil, errors.New("invalid preview query target declaration")
+			}
+			if _, duplicate := queries[tenantID][target]; duplicate {
+				return nil, errors.New("duplicate preview query target declaration")
+			}
+			queries[tenantID][target] = struct{}{}
+		}
+	}
+	// Keep only the private immutable copy, never caller-owned maps/slices.
+	cfg.PreviewAccessQueryTargets = nil
+	return &Gate{cfg: cfg, next: next, cache: map[[32]byte]success{}, failures: map[string]attempts{}, kdf: make(chan struct{}, 2), previewQueries: queries}, nil
 }
 
 func normalize(raw string) string {
@@ -218,7 +243,7 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username, password, ok := r.BasicAuth()
-	if !ok && g.cfg.PreviewAccess != nil && previewAccessRequest(r, tenant) && validPreviewPasswordHash(hash) && g.cfg.PreviewAccess(r.Clone(r.Context()), tenant) {
+	if !ok && g.cfg.PreviewAccess != nil && g.previewAccessRequest(r, tenant) && validPreviewPasswordHash(hash) && g.cfg.PreviewAccess(r.Clone(r.Context()), tenant) {
 		g.servePrivate(private, r)
 		return
 	}
@@ -306,11 +331,16 @@ func validPreviewPasswordHash(hash string) bool {
 // previewAccessRequest is a ceiling on the host callback, not a content
 // allowlist. In particular, encoded or normalized aliases must never turn an
 // approved content path into an application's control endpoint.
-func previewAccessRequest(r *http.Request, tenant Tenant) bool {
+func (g *Gate) previewAccessRequest(r *http.Request, tenant Tenant) bool {
 	if tenant.Kind != "preview" || (r.Method != http.MethodGet && r.Method != http.MethodHead) || r.URL == nil ||
-		r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.RawPath != "" || r.URL.Fragment != "" || r.URL.RawFragment != "" ||
+		r.URL.ForceQuery || r.URL.RawPath != "" || r.URL.Fragment != "" || r.URL.RawFragment != "" ||
 		r.URL.Opaque != "" || r.URL.User != nil || r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
 		return false
+	}
+	if r.URL.RawQuery != "" {
+		if _, declared := g.previewQueries[tenant.ID][r.URL.Path+"?"+r.URL.RawQuery]; !declared {
+			return false
+		}
 	}
 	if values := r.Header.Values("Authorization"); len(values) > 1 {
 		return false
@@ -320,8 +350,12 @@ func previewAccessRequest(r *http.Request, tenant Tenant) bool {
 			return false
 		}
 	}
-	target := r.URL.Path
-	if !strings.HasPrefix(target, "/") || strings.Contains(target, "//") || strings.ContainsAny(target, "\\%;") || r.URL.EscapedPath() != target {
+	return previewAccessPath(r.URL)
+}
+
+func previewAccessPath(u *url.URL) bool {
+	target := u.Path
+	if !strings.HasPrefix(target, "/") || strings.Contains(target, "//") || strings.ContainsAny(target, "\\%;") || u.EscapedPath() != target {
 		return false
 	}
 	clean := path.Clean(target)

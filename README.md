@@ -18,6 +18,19 @@ The module path must resolve an installed Playwright package; optionally set
 and a test cookie auth hook. It does not exercise production authorization or
 PostgreSQL restart durability.
 
+The shared form layout/interaction regression needs no Go build or live service:
+
+```sh
+CMS_PLAYWRIGHT_MODULE=/path/to/playwright/package.json \
+  CMS_UI_ARTIFACTS=/tmp/cms-forms node adminui/testdata/form-usability.cjs
+```
+
+It drives the actual editor/platform UI at desktop, tablet and narrow mobile
+widths against synthetic loopback APIs, including raw source resize/preservation,
+draft/save/reload/conflict behavior, required fields, dates and site creation.
+Optionally set `CMS_BROWSER_CHANNEL=msedge` to reuse an installed browser.
+Hosted CI runs this harness on the exact source head and retains screenshots.
+
 > ⚠️ **Experimental** — This plugin compiles and passes its unit tests but has not been validated in any active GoCodeAlone-internal production deployment. Use with caution. Please [open an issue](https://github.com/GoCodeAlone/workflow-plugin-cms/issues/new) if you adopt it so we can promote it to **verified** status.
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

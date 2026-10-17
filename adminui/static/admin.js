@@ -70,7 +70,15 @@ function pagePayload(form) {
 }
 function dateTimeLocalToISO(value){if(!value)return "";const d=new Date(value);return Number.isNaN(d.getTime())?"":d.toISOString()}
 function isoToDateTimeLocal(value){if(!value)return "";const d=new Date(value);if(Number.isNaN(d.getTime()))return "";const pad=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(d.getHours())+":"+pad(d.getMinutes())}
-function toast(msg,kind){const t=$("#toast");t.textContent=msg;t.className=kind||"";t.hidden=false;setTimeout(()=>{t.hidden=true},3500)}
+let toastTimer;
+function toast(msg,kind){
+ const t=$("#toast"),previousFocus=document.activeElement;clearTimeout(toastTimer);
+ const message=document.createElement("span");message.textContent=msg;
+ const dismiss=document.createElement("button");dismiss.type="button";dismiss.textContent="Dismiss";dismiss.setAttribute("aria-label","Dismiss notification");
+ dismiss.onclick=()=>{const focused=t.contains(document.activeElement);t.hidden=true;clearTimeout(toastTimer);if(focused&&previousFocus?.isConnected)previousFocus.focus()};
+ t.replaceChildren(message,dismiss);t.className=kind||"";t.hidden=false;
+ if(kind!=="error")toastTimer=setTimeout(()=>{if(!t.contains(document.activeElement))t.hidden=true},5000);
+}
 function fail(err){console.error(err);toast(err.message,"error")}
 function escapeHTML(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;")}
 function canonicalID(s){return /^[1-9][0-9]*$/.test(s)&&Number.isSafeInteger(Number(s))?Number(s):0}
@@ -151,7 +159,7 @@ async function showPagePane(route,generation){
  $$("[data-page-pane]",form).forEach(el=>el.hidden=el.dataset.pagePane!==(route.view==="html"?"content":route.view));
  if(route.view==="content"||route.view==="html"){
   const isHTML=route.view==="html",advanced=editor.dataset.advanced==="true";
-  source.hidden=!isHTML;surface.hidden=isHTML;$(".editor-toolbar",editor).hidden=isHTML||advanced||!(route.pid==="new"?pagePermissions.create:pagePermissions.edit);
+  source.hidden=!isHTML;$(":scope > #page-source-help",editor).hidden=!isHTML;surface.hidden=isHTML;$(".editor-toolbar",editor).hidden=isHTML||advanced||!(route.pid==="new"?pagePermissions.create:pagePermissions.edit);
   surface.contentEditable=String(!advanced&&(route.pid==="new"?pagePermissions.create:pagePermissions.edit));
   const sections=$("#section-tabs");sections.hidden=isHTML;sections.replaceChildren();
   const children=[...surface.children],plain=[...surface.childNodes].some(n=>n.nodeType===Node.TEXT_NODE&&n.textContent.trim());

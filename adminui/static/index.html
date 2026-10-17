@@ -9,10 +9,10 @@
 <nav id="page-tabs" aria-label="Page views"></nav>
 <form id="page-editor-form" novalidate><input type="hidden" name="id" data-page-field>
 <div data-page-pane="publishing" hidden class="settings-pane"><h3>Page &amp; publishing</h3><p>Save publishes only to this site's configured destinations. Review sites remain isolated from production.</p>
-<label>Title <input name="title" data-page-field required maxlength="250" placeholder="Page title"></label><label>Path <input name="path" data-page-field required pattern="/.*" placeholder="/welcome"></label>
+<label>Title (required) <input name="title" data-page-field required maxlength="250" placeholder="Page title"></label><label>Path (required) <input name="path" data-page-field required pattern="/.*" placeholder="/welcome" aria-describedby="page-path-help"></label><p id="page-path-help" class="field-help">Start with /, for example /welcome. This is the page's address within this site.</p>
 <label>Status <select name="status" data-page-field><option value="draft">draft</option><option value="published">published</option><option value="scheduled">scheduled</option><option value="archived">archived</option></select></label>
-<label>Publish at <input name="publish_at" data-page-field type="datetime-local"></label><label>Unpublish at <input name="unpublish_at" data-page-field type="datetime-local"></label><p id="schedule-zone"></p></div>
-<div data-page-pane="appearance" hidden class="settings-pane"><h3>Appearance</h3><p>Choose a template from this site's own bundle, then check Preview.</p><label>Template <input name="template_id" data-page-field list="page-templates" placeholder="Choose a tenant template"></label></div>
+<label>Publish at (optional) <input name="publish_at" data-page-field type="datetime-local" aria-describedby="schedule-zone"></label><label>Unpublish at (optional) <input name="unpublish_at" data-page-field type="datetime-local" aria-describedby="schedule-zone"></label><p id="schedule-zone" class="field-help"></p></div>
+<div data-page-pane="appearance" hidden class="settings-pane"><h3>Appearance</h3><p id="template-help">Choose a template from this site's own bundle, then check Preview. Leave blank to render the page body without a template.</p><label>Template (optional) <input name="template_id" data-page-field list="page-templates" placeholder="Choose a tenant template" aria-describedby="template-help"></label></div>
 <div id="content-pane" data-page-pane="content" hidden><div class="content-layout"><nav id="section-tabs" aria-label="Content sections"></nav><div class="content-editor"><h3 id="section-title">Content</h3>          <div class="form-row full">
             <span class="sr-only">Body</span>
             <div class="rich-editor" data-rich-editor>
@@ -27,7 +27,8 @@
                 <button type="button" data-editor-action="source">HTML</button>
               </div>
               <div class="editor-surface" contenteditable="true" role="textbox" aria-multiline="true" data-editor-surface aria-label="Page body"></div>
-              <textarea name="body_html" rows="12" data-editor-source aria-label="Page HTML source" hidden></textarea>
+              <p id="page-source-help" class="field-help" hidden>Edit the page's HTML. Drag the lower-right corner to make the editor taller.</p>
+              <textarea name="body_html" rows="12" data-editor-source aria-label="Page HTML source" aria-describedby="page-source-help" spellcheck="false" autocapitalize="off" hidden></textarea>
             </div>
           </div>
 </div></div></div>

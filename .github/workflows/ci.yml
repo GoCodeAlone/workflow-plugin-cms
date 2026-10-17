@@ -9,6 +9,36 @@ permissions:
   contents: read
 
 jobs:
+  forms:
+    name: Shared forms browser QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact tested source
+        env:
+          EXPECTED_TEST_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_TEST_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated browser tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/cms-ui" --no-audit --no-fund --save-exact playwright@1.61.1
+          "$RUNNER_TEMP/cms-ui/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Exercise actual editor and platform forms
+        env:
+          CMS_PLAYWRIGHT_MODULE: ${{ runner.temp }}/cms-ui/package.json
+          CMS_UI_ARTIFACTS: ${{ runner.temp }}/cms-form-results
+        run: node adminui/testdata/form-usability.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cms-form-browser-results
+          path: ${{ runner.temp }}/cms-form-results
+          retention-days: 7
   test:
     runs-on: ubuntu-latest
     services:

@@ -116,7 +116,7 @@ release, host dependency adoption, isolated review deployment and hosted browser
 acceptance. No release, deployment, CMS migration/archive, credential change or
 production content publication is part of this patch.
 
-Jon subsequently supplied `tina@langevin.me` and required an authorized-admin-
+Jon subsequently supplied the recipient privately and required an authorized-admin-
 editable per-site recipient. Implement contact delivery separately from these
 layout repairs, with explicit review/production routing and verified transport.
 The existing review form remains a no-send demo until that integration is
